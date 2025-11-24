@@ -88,7 +88,7 @@ async def save_file(media):
     file_id, file_ref = unpack_new_file_id(media.file_id)
     
     # Define your custom keywords in a list
-    custom_keywords = ["_", "Adrama_lovers", "DA_Rips", "ADL_Drama", "KDL", "ADL", "KncKorean", "YDF", "The_request_group", "The_Drama_arena", "RFT", "kdramaforyouall"]
+    custom_keywords = ["_", "Adrama_lovers", "DA_Rips", "DramaPz", "ADL_Drama", "KDL", "ADL", "KncKorean", "YDF", "The_request_group", "The_Drama_arena", "RFT", "kdramaforyouall"]
 
     # Step 1: Remove special characters and replace with a space
     file_name = re.sub(r"[@\-\.#+$%^*()~`,;:\"?/<>\[\]{}=|\\]", " ", str(media.file_name))
