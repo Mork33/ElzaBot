@@ -1,4 +1,4 @@
-class script(obclass script(object):
+class script(object):
     START_TXT = """<b>🎄 Merry Christmas {},</b>
 
 <blockquote><b>ᴍʏ ɴᴀᴍᴇ ɪꜱ</b> <a href='https://t.me/DramaShip1bot'><b>ᴅʀᴀᴍᴀ ꜱʜɪᴘ ʙᴏᴛ ⎚</b></a></blockquote>
