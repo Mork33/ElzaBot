@@ -106,10 +106,10 @@ async def start(client, message):
             print(f"Error sending sticker in PM: {str(e)}")
         
         buttons = [[
-                    InlineKeyboardButton('+ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ +', url=f'http://telegram.me/{temp.U_NAME}?startgroup=true')
+                    InlineKeyboardButton('🎀 ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ 🎀', url=f'http://telegram.me/{temp.U_NAME}?startgroup=true')
                 ],[
-                    InlineKeyboardButton('♻️ ᴅᴍᴄᴀ', callback_data='disclaimer'),
-                    InlineKeyboardButton('👤 ᴀʙᴏᴜᴛ', callback_data='me')
+                    InlineKeyboardButton('☃️ ᴅᴍᴄᴀ', callback_data='disclaimer'),
+                    InlineKeyboardButton('🎄 ᴀʙᴏᴜᴛ', callback_data='me')
                 ]]
         reply_markup = InlineKeyboardMarkup(buttons)
         await message.reply_photo(
