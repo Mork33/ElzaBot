@@ -39,15 +39,12 @@ FRESH = {}
 SPELL_CHECK = {}
 
 
-import asyncio
-import random
-import re
-from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+
 
 # Configuration - Add these at the top of your file
-STICKER_ID = "CAACAgIAAxkBAAEaBcZnTxyz..."  # Replace with your sticker file_id
-STICKER_DELETE_TIME = 3  # Time in seconds before deleting the sticker
+STICKER_ID = "CAACAgQAAxkBAAENXzJnZ5_pSJe-hfuSYUQuQ7-2M-nMXgAC5BQAApZLaFCRBOz13yIu0DYE"  # Replace with your sticker file_id
+STICKER_DELETE_TIME = 1.5  # Time in seconds before deleting the sticker
 
 # Helper function to send and delete sticker
 async def send_and_delete_sticker(client, message):
