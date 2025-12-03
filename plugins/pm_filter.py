@@ -43,14 +43,21 @@ SPELL_CHECK = {}
 
 
 # Configuration - Add these at the top of your file
-STICKER_ID = "CAACAgQAAxkBAAENXzJnZ5_pSJe-hfuSYUQuQ7-2M-nMXgAC5BQAApZLaFCRBOz13yIu0DYE"  # Replace with your sticker file_id
+STICKER_IDS = [
+    "CAACAgQAAxkBAAENXzJnZ5_pSJe-hfuSYUQuQ7-2M-nMXgAC5BQAApZLaFCRBOz13yIu0DYE",
+    "CAACAgQAAxkBAAEDXzNnZ5_qTKf-igvTZVRvR8-3N-oNYhAD6BUABqZMbFDSCPz24zJv1DYE",
+    "CAACAgQAAxkBAAEDXzRnZ5_rULg-jhwUaWVwS9-4O-pOZiAE7BYADrZNcFETDQ014kKw2DYE"
+    # Add more sticker IDs here
+]
 STICKER_DELETE_TIME = 1.5  # Time in seconds before deleting the sticker
 
 # Helper function to send and delete sticker
 async def send_and_delete_sticker(client, message):
-    """Send a sticker and delete it after specified time"""
+    """Send a random sticker and delete it after specified time"""
     try:
-        sticker_msg = await message.reply_sticker(sticker=STICKER_ID)
+        # Select a random sticker from the list
+        random_sticker = random.choice(STICKER_IDS)
+        sticker_msg = await message.reply_sticker(sticker=random_sticker)
         await asyncio.sleep(STICKER_DELETE_TIME)
         await sticker_msg.delete()
     except Exception as e:
