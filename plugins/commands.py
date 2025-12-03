@@ -76,18 +76,35 @@ async def start(client, message):
         await dlt.delete()
         return         
     if message.chat.type in [enums.ChatType.GROUP, enums.ChatType.SUPERGROUP]:
-        silenxbotz=await message.reply_sticker("CAACAgEAAxkBAAENpaZnl898tVVOj-69IH89gx-8ee-CCAACWwIAAu8vQEXX2jgCrI2F-jYE")
-        await asyncio.sleep(5)
-        await silenxbotz.delete()
+        # Send random sticker in group
+        try:
+            random_sticker = random.choice(STICKER_IDS)
+            sticker_msg = await message.reply_sticker(sticker=random_sticker)
+            await asyncio.sleep(STICKER_DELETE_TIME)
+            await sticker_msg.delete()
+        except Exception as e:
+            print(f"Error sending sticker in group: {str(e)}")
+        
         if not await db.get_chat(message.chat.id):
             total=await client.get_chat_members_count(message.chat.id)
             await client.send_message(LOG_CHANNEL, script.LOG_TEXT_G.format(message.chat.title, message.chat.id, total, "Unknown"))       
             await db.add_chat(message.chat.id, message.chat.title)
         return 
+    
     if not await db.is_user_exist(message.from_user.id):
         await db.add_user(message.from_user.id, message.from_user.first_name)
         await client.send_message(LOG_CHANNEL, script.LOG_TEXT_P.format(message.from_user.id, message.from_user.mention))
+    
     if len(message.command) != 2:
+        # Send random sticker in PM before start message
+        try:
+            random_sticker = random.choice(STICKER_IDS)
+            sticker_msg = await message.reply_sticker(sticker=random_sticker)
+            await asyncio.sleep(STICKER_DELETE_TIME)
+            await sticker_msg.delete()
+        except Exception as e:
+            print(f"Error sending sticker in PM: {str(e)}")
+        
         buttons = [[
                     InlineKeyboardButton('+ ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ +', url=f'http://telegram.me/{temp.U_NAME}?startgroup=true')
                 ],[
