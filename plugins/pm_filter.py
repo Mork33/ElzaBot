@@ -39,6 +39,10 @@ FRESH = {}
 SPELL_CHECK = {}
 
 
+# Add these configuration variables at the top of your file
+STICKER_ID = "YOUR_STICKER_FILE_ID_HERE"  # Replace with your sticker's file_id
+STICKER_DELETE_TIME = 5  # Time in seconds before deleting the sticker
+
 @Client.on_message(filters.group & filters.text & filters.incoming)
 async def give_filter(client, message):
     if EMOJI_MODE:
@@ -84,6 +88,71 @@ async def pm_text(bot, message):
             )
     except Exception as e:
         print(f"An error occurred: {str(e)}")
+
+
+# Helper function to send and delete sticker
+async def send_temp_sticker(client, message, sticker_id, delete_time):
+    """
+    Send a sticker and automatically delete it after specified time
+    
+    Args:
+        client: Pyrogram client
+        message: Original message object
+        sticker_id: File ID of the sticker to send
+        delete_time: Time in seconds before deleting the sticker
+    """
+    try:
+        # Send the sticker
+        sticker_msg = await message.reply_sticker(sticker=sticker_id)
+        
+        # Wait for the specified time
+        await asyncio.sleep(delete_time)
+        
+        # Delete the sticker
+        await sticker_msg.delete()
+    except Exception as e:
+        print(f"Error in send_temp_sticker: {str(e)}")
+
+
+# Modified auto_filter function (add this to your existing auto_filter function)
+async def auto_filter(client, message):
+    # Send sticker at the start of auto_filter
+    asyncio.create_task(send_temp_sticker(client, message, STICKER_ID, STICKER_DELETE_TIME))
+    
+    # Your existing auto_filter code continues here...
+    # Example:
+    search = message.text
+    files, offset, total = await get_search_results(
+        chat_id=message.chat.id,
+        query=search.lower(),
+        offset=0,
+        filter=True
+    )
+    
+    if total == 0:
+        # No results found
+        return
+    
+    # Send your results
+    # ... rest of your auto_filter logic
+
+
+# Alternative: If you want the sticker to appear only when results are found
+async def auto_filter_with_conditional_sticker(client, message):
+    search = message.text
+    files, offset, total = await get_search_results(
+        chat_id=message.chat.id,
+        query=search.lower(),
+        offset=0,
+        filter=True
+    )
+    
+    if total > 0:
+        # Send sticker only when results are found
+        asyncio.create_task(send_temp_sticker(client, message, STICKER_ID, STICKER_DELETE_TIME))
+    
+    # Continue with rest of auto_filter logic
+    # ...
 
 
 @Client.on_callback_query(filters.regex(r"^reffff"))
