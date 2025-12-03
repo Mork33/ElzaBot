@@ -39,31 +39,74 @@ FRESH = {}
 SPELL_CHECK = {}
 
 
-# Add these configuration variables at the top of your file
-STICKER_ID = "YOUR_STICKER_FILE_ID_HERE"  # Replace with your sticker's file_id
-STICKER_DELETE_TIME = 5  # Time in seconds before deleting the sticker
+import asyncio
+import random
+import re
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+# Configuration - Add these at the top of your file
+STICKER_ID = "CAACAgIAAxkBAAEaBcZnTxyz..."  # Replace with your sticker file_id
+STICKER_DELETE_TIME = 3  # Time in seconds before deleting the sticker
+
+# Helper function to send and delete sticker
+async def send_and_delete_sticker(client, message):
+    """Send a sticker and delete it after specified time"""
+    try:
+        sticker_msg = await message.reply_sticker(sticker=STICKER_ID)
+        await asyncio.sleep(STICKER_DELETE_TIME)
+        await sticker_msg.delete()
+    except Exception as e:
+        print(f"Error in send_and_delete_sticker: {str(e)}")
+
 
 @Client.on_message(filters.group & filters.text & filters.incoming)
 async def give_filter(client, message):
     if EMOJI_MODE:
         await message.react(emoji=random.choice(REACTIONS))
+    
     await silentdb.update_top_messages(message.from_user.id, message.text)
+    
     if message.chat.id != SUPPORT_CHAT_ID:
         settings = await get_settings(message.chat.id)
         if settings['auto_ffilter']:
+            # Check for links
             if re.search(r'https?://\S+|www\.\S+|t\.me/\S+', message.text):
                 if await is_check_admin(client, message.chat.id, message.from_user.id):
                     return
-                return await message.delete()   
+                return await message.delete()
+            
+            # Send sticker first
+            await send_and_delete_sticker(client, message)
+            
+            # Then proceed with auto filter
             await auto_filter(client, message)
     else:
         search = message.text
-        temp_files, temp_offset, total_results = await get_search_results(chat_id=message.chat.id, query=search.lower(), offset=0, filter=True)
+        temp_files, temp_offset, total_results = await get_search_results(
+            chat_id=message.chat.id, 
+            query=search.lower(), 
+            offset=0, 
+            filter=True
+        )
+        
         if total_results == 0:
             return
         else:
-            return await message.reply_text(f"<b>Hᴇʏ {message.from_user.mention},\n\nʏᴏᴜʀ ʀᴇǫᴜᴇꜱᴛ ɪꜱ ᴀʟʀᴇᴀᴅʏ ᴀᴠᴀɪʟᴀʙʟᴇ ✅\n\n📂 ꜰɪʟᴇꜱ ꜰᴏᴜɴᴅ : {str(total_results)}\n🔍 ꜱᴇᴀʀᴄʜ :</b> <code>{search}</code>\n\n<b>‼️ ᴛʜɪs ɪs ᴀ <u>sᴜᴘᴘᴏʀᴛ ɢʀᴏᴜᴘ</u> sᴏ ᴛʜᴀᴛ ʏᴏᴜ ᴄᴀɴ'ᴛ ɢᴇᴛ ғɪʟᴇs ғʀᴏᴍ ʜᴇʀᴇ...\n\n📝 ꜱᴇᴀʀᴄʜ ʜᴇʀᴇ : 👇</b>",   
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔍 ᴊᴏɪɴ ᴀɴᴅ ꜱᴇᴀʀᴄʜ ʜᴇʀᴇ 🔎", url=GRP_LNK)]]))
+            # Send sticker in support chat too
+            await send_and_delete_sticker(client, message)
+            
+            return await message.reply_text(
+                f"<b>Hᴇʏ {message.from_user.mention},\n\n"
+                f"ʏᴏᴜʀ ʀᴇǫᴜᴇꜱᴛ ɪꜱ ᴀʟʀᴇᴀᴅʏ ᴀᴠᴀɪʟᴀʙʟᴇ ✅\n\n"
+                f"📂 ꜰɪʟᴇꜱ ꜰᴏᴜɴᴅ : {str(total_results)}\n"
+                f"🔍 ꜱᴇᴀʀᴄʜ :</b> <code>{search}</code>\n\n"
+                f"<b>‼️ ᴛʜɪs ɪs ᴀ <u>sᴜᴘᴘᴏʀᴛ ɢʀᴏᴜᴘ</u> sᴏ ᴛʜᴀᴛ ʏᴏᴜ ᴄᴀɴ'ᴛ ɢᴇᴛ ғɪʟᴇs ғʀᴏᴍ ʜᴇʀᴇ...\n\n"
+                f"📝 ꜱᴇᴀʀᴄʜ ʜᴇʀᴇ : 👇</b>",   
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔍 ᴊᴏɪɴ ᴀɴᴅ ꜱᴇᴀʀᴄʜ ʜᴇʀᴇ 🔎", url=GRP_LNK)]
+                ])
+            )
 
 
 @Client.on_message(filters.private & filters.text & filters.incoming)
@@ -72,88 +115,37 @@ async def pm_text(bot, message):
     content = message.text
     user = message.from_user.first_name
     user_id = message.from_user.id
+    
     if EMOJI_MODE:
         await message.react(emoji=random.choice(REACTIONS), big=True)
+    
+    # Skip commands
     if content.startswith(("/", "#")):
         return  
+    
     try:
         await silentdb.update_top_messages(user_id, content)
         pm_search = await db.pm_search_status(bot_id)
+        
         if pm_search:
+            # Send sticker first in PM
+            await send_and_delete_sticker(bot, message)
+            
+            # Then proceed with auto filter
             await auto_filter(bot, message)
         else:
+            # Send sticker even when PM search is disabled
+            await send_and_delete_sticker(bot, message)
+            
             await message.reply_text(
-             text=f"<b><i>ɪ ᴀᴍ ɴᴏᴛ ᴡᴏʀᴋɪɴɢ ʜᴇʀᴇ 🚫 ᴊᴏɪɴ ᴍʏ ɢʀᴏᴜᴘ ꜰʀᴏᴍ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴ ᴀɴᴅ ꜱᴇᴀʀᴄʜ ᴛʜᴇʀᴇ !</i></b>",   
-             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📝 ꜱᴇᴀʀᴄʜʜᴇʀᴇ ", url=GRP_LNK)]])
+                text=f"<b><i>ɪ ᴀᴍ ɴᴏᴛ ᴡᴏʀᴋɪɴɢ ʜᴇʀᴇ 🚫 "
+                     f"ᴊᴏɪɴ ᴍʏ ɢʀᴏᴜᴘ ꜰʀᴏᴍ ʙᴇʟᴏᴡ ʙᴜᴛᴛᴏɴ ᴀɴᴅ ꜱᴇᴀʀᴄʜ ᴛʜᴇʀᴇ !</i></b>",   
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📝 ꜱᴇᴀʀᴄʜʜᴇʀᴇ ", url=GRP_LNK)]
+                ])
             )
     except Exception as e:
-        print(f"An error occurred: {str(e)}")
-
-
-# Helper function to send and delete sticker
-async def send_temp_sticker(client, message, sticker_id, delete_time):
-    """
-    Send a sticker and automatically delete it after specified time
-    
-    Args:
-        client: Pyrogram client
-        message: Original message object
-        sticker_id: File ID of the sticker to send
-        delete_time: Time in seconds before deleting the sticker
-    """
-    try:
-        # Send the sticker
-        sticker_msg = await message.reply_sticker(sticker=sticker_id)
-        
-        # Wait for the specified time
-        await asyncio.sleep(delete_time)
-        
-        # Delete the sticker
-        await sticker_msg.delete()
-    except Exception as e:
-        print(f"Error in send_temp_sticker: {str(e)}")
-
-
-# Modified auto_filter function (add this to your existing auto_filter function)
-async def auto_filter(client, message):
-    # Send sticker at the start of auto_filter
-    asyncio.create_task(send_temp_sticker(client, message, STICKER_ID, STICKER_DELETE_TIME))
-    
-    # Your existing auto_filter code continues here...
-    # Example:
-    search = message.text
-    files, offset, total = await get_search_results(
-        chat_id=message.chat.id,
-        query=search.lower(),
-        offset=0,
-        filter=True
-    )
-    
-    if total == 0:
-        # No results found
-        return
-    
-    # Send your results
-    # ... rest of your auto_filter logic
-
-
-# Alternative: If you want the sticker to appear only when results are found
-async def auto_filter_with_conditional_sticker(client, message):
-    search = message.text
-    files, offset, total = await get_search_results(
-        chat_id=message.chat.id,
-        query=search.lower(),
-        offset=0,
-        filter=True
-    )
-    
-    if total > 0:
-        # Send sticker only when results are found
-        asyncio.create_task(send_temp_sticker(client, message, STICKER_ID, STICKER_DELETE_TIME))
-    
-    # Continue with rest of auto_filter logic
-    # ...
-
+        print(f"An error occurred in pm_text: {str(e)}")
 
 @Client.on_callback_query(filters.regex(r"^reffff"))
 async def refercall(bot, query):
