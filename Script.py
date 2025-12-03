@@ -302,15 +302,17 @@ Nᴀᴍᴇ : {}
 
 <blockquote>Mᴇꜱꜱᴀɢᴇ : <b>{}</b> ✨</blockquote></b>"""
     
-    CAPTION = """<b><a href="https://t.me/DramaShip">{file_name}</a> 🎄
+    CAPTION = """<b>🎄 <a href="https://t.me/DramaShip">{file_name}</a></b>
 
-<blockquote>✪ size- {file_size} 🎁</blockquote>
+<blockquote>📦 <b>Size:</b> {file_size} • 🎁 Ready to Download</blockquote>
 
-<b>Have A Merry Christmas 💖🎅</b>
+<b>“May the magic of Christmas fill your heart with warmth, joy, and endless blessings.” ✨🎅</b>
 
-<b>Bot: @DramaShip1bot ⛄</b>
+<b>❤️ Merry Christmas & Happy Holidays! ⛄🎄</b>
 
-<b>⚜️ Powered By : <a href="https://t.me/DramaShip">@ᴅʀᴀᴍᴀꜱʜɪᴘ</a> ✨</b></b>"""
+<b>🤖 Bot:</b> @DramaShip1bot  
+<b>⚜️ Powered By:</b> <a href="https://t.me/DramaShip">@ᴅʀᴀᴍᴀꜱʜɪᴘ</a> ✨
+"""
 
     IMDB_TEMPLATE_TXT = """<b>🎄 <b>Title</b>: <a href={url}>{title}</a>
 🎭 Genres: {genres}
