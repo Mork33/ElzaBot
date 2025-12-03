@@ -112,6 +112,13 @@ PAID_STREAM = bool(environ.get('PAID_STREAM', False))
 LANGUAGES = ["malayalam", "", "tamil", "", "english", "", "hindi", "", "telugu", "", "kannada", "", "gujarati", "", "marathi", "", "punjabi", ""]
 QUALITIES = ["240p", "", "360P", "", "480P", "", "540P", "", "720P", "", "1080P", "", "1440P", "", "2160P", ""]
 SEASONS = ["s01" , "s02" , "s03" , "s04", "s05" , "s06" , "s07" , "s08" , "s09" , "s10"]
+# Sticker Configuration
+STICKER_IDS = [
+    "CAACAgQAAxkBAAENXzJnZ5_pSJe-hfuSYUQuQ7-2M-nMXgAC5BQAApZLaFCRBOz13yIu0DYE",
+    "CAACAgQAAxkBAAEDXzNnZ5_qTKf-igvTZVRvR8-3N-oNYhAD6BUABqZMbFDSCPz24zJv1DYE",
+    "CAACAgQAAxkBAAEDXzRnZ5_rULg-jhwUaWVwS9-4O-pOZiAE7BYADrZNcFETDQ014kKw2DYE"
+]
+STICKER_DELETE_TIME = 1.5  # Time in seconds before deleting the sticker
 
 STREAM_MODE = bool(environ.get('STREAM_MODE', False))
 
