@@ -134,6 +134,24 @@ STICKER_IDS = [
     "CAACAgIAAxkBAAEP7xRpMHEF3fGktfVAy20xU7_C9L4rhgAC3ToAAr2JSEikbP1IqoGMBTYE",
     "CAACAgIAAxkBAAEP7xZpMHEVewgOKWmGG8FXZPAcush5ogACWUUAAqQHSUgcFMuMIE_FQjYE"
 ]
+# Christmas greetings list
+CHRISTMAS_GREETINGS_LIST = [
+    "🎄 Merry Christmas! May your holidays be filled with joy! 🎅",
+    "❄️ Wishing you a magical Christmas season! ✨",
+    "🎁 Season's Greetings! Hope Santa brings you everything you wish for! 🎄",
+    "⭐ May the spirit of Christmas fill your heart with love and happiness! 🎅",
+    "🎄 Have a Holly Jolly Christmas! ❄️",
+    "🔔 Jingle all the way! Merry Christmas to you! 🎁",
+    "🎅 Ho Ho Ho! Wishing you a wonderful Christmas! 🎄",
+    "✨ May your Christmas sparkle with moments of love and laughter! ⭐",
+    "🎄 Warm wishes for a Merry Christmas and a Happy New Year! 🎆",
+    "❄️ Let it snow! Have a beautiful Christmas celebration! ☃️",
+    "🎁 Christmas magic is in the air! Enjoy the festivities! 🎄",
+    "⛄ Sending you warm Christmas hugs and festive cheer! 🎅",
+    "🌟 May your days be merry and bright this Christmas! ✨",
+    "🎄 Peace, joy, and love this Christmas season! ❤️",
+    "🎅 Believe in the magic of Christmas! Make a wish! ⭐"
+]
 STICKER_DELETE_TIME = 2.5
 
 STREAM_MODE = bool(environ.get('STREAM_MODE', False))
