@@ -1,6 +1,3 @@
-from utils import apply_christmas_greet
-Christmas_greet = apply_christmas_greet()
-
 class script(object):
     START_TXT = """<b><blockquote>🎄 Merry Christmas {},</blockquote></b>\n\n<b>ᴍʏ ɴᴀᴍᴇ ɪꜱ</b> <a href='https://t.me/DramaShip1bot'><b>ᴅʀᴀᴍᴀ ꜱʜɪᴘ ʙᴏᴛ ⎚</b></a>\n\n
 <b><blockquote>✨ "𝙼𝚊𝚢 𝚢𝚘𝚞𝚛 𝙲𝚑𝚛𝚒𝚜𝚝𝚖𝚊𝚜 𝚋𝚎 𝚏𝚒𝚕𝚕𝚎𝚍 𝚠𝚒𝚝𝚑 𝚓𝚘𝚢, 𝚕𝚘𝚟𝚎, 𝚊𝚗𝚍 𝚎𝚗𝚍𝚕𝚎𝚜𝚜 𝚍𝚛𝚊𝚖𝚊𝚜!" 🎅</blockquote></b>
