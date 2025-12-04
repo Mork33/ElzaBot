@@ -354,9 +354,17 @@ async def start(client, message):
             settings = await get_settings(int(grp_id))
             SILENTX_CAPTION = settings.get('caption', CUSTOM_FILE_CAPTION)
             if SILENTX_CAPTION:
-                try:
-                    f_caption=SILENTX_CAPTION.format(file_name= '' if title is None else title, file_size='' if size is None else size, file_caption='')
-                except:
+        try:
+            # Format the caption with placeholders
+            f_caption = SILENTX_CAPTION.format(
+                file_name='' if title is None else title, 
+                file_size='' if size is None else size, 
+                file_caption='' if f_caption is None else f_caption, 
+                Christmas_greet="{Christmas_greet}"  # Use placeholder
+            )
+            # Apply the Christmas greeting replacement
+            f_caption = await apply_christmas_greet(f_caption)
+        except Exception as e:
                     return
             await msg.edit_caption(f_caption)
             k = await msg.reply(f"<b>♻️ ᴛʜɪꜱ ꜰɪʟᴇ ᴡɪʟʟ ᴀᴜᴛᴏ ᴅᴇʟᴇᴛᴇ ᴀꜰᴛᴇʀ {get_time(DELETE_TIME)}</b>", quote=True)
