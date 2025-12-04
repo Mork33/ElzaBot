@@ -729,3 +729,10 @@ async def group_setting_buttons(grp_id):
                 InlineKeyboardButton('⇋ ᴄʟᴏꜱᴇ ꜱᴇᴛᴛɪɴɢꜱ ᴍᴇɴᴜ ⇋', callback_data='close_data')
     ]]
     return buttons
+
+async def apply_christmas_greet(text: str) -> str:
+    """Replace {Christmas_greet} with a random greeting."""
+    if "{Christmas_greet}" in text:
+        random_greet = random.choice(XMAS_GREETINGS_LIST)
+        text = text.replace("{Christmas_greet}", random_greet)
+    return text
