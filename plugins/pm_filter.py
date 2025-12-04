@@ -191,34 +191,34 @@ async def next_page(bot, query):
             btn = [
                 [
                     InlineKeyboardButton(
-                        text=f"{silent_size(file.file_size)}| {extract_tag(file.file_name)} {clean_filename(file.file_name)}", callback_data=f'file#{file.file_id}'
+                        text=f"🕯{silent_size(file.file_size)}✨{extract_tag(file.file_name)}🎀{clean_filename(file.file_name)}", callback_data=f'file#{file.file_id}'
                     ),
                 ]
                 for file in files
             ]
             btn.insert(0, 
                 [ 
-                    InlineKeyboardButton("ᴘɪxᴇʟ", callback_data=f"qualities#{key}#0"),
-                    InlineKeyboardButton("ʟᴀɴɢᴜᴀɢᴇ", callback_data=f"languages#{key}#0"),
-                    InlineKeyboardButton("ꜱᴇᴀꜱᴏɴ",  callback_data=f"seasons#{key}#0")
+                    InlineKeyboardButton("🎄ᴘɪxᴇʟ🎄", callback_data=f"qualities#{key}#0"),
+                    InlineKeyboardButton("🌨ʟᴀɴɢᴜᴀɢᴇ🌨", callback_data=f"languages#{key}#0"),
+                    InlineKeyboardButton("🎊ꜱᴇᴀꜱᴏɴ🎊",  callback_data=f"seasons#{key}#0")
                 ]
             )
             btn.insert(1, [
-		InlineKeyboardButton("Sᴜᴘᴘᴏʀᴛ", url=f"https://t.me/AM_FILMS"),
-                InlineKeyboardButton("📥 Sᴇɴᴅ Aʟʟ 📥", callback_data=f"sendfiles#{key}")
+		InlineKeyboardButton("🎁Sᴜᴘᴘᴏʀᴛ🎁", url=f"https://t.me/DramaShip"),
+                InlineKeyboardButton("❄️ Sᴇɴᴅ Aʟʟ ❄️", callback_data=f"sendfiles#{key}")
            
             ])
         else:
             btn = []
             btn.insert(0, 
                 [
-                    InlineKeyboardButton("ᴘɪxᴇʟ", callback_data=f"qualities#{key}#0"),
-                    InlineKeyboardButton("ʟᴀɴɢᴜᴀɢᴇ", callback_data=f"languages#{key}#0"),
-                    InlineKeyboardButton("ꜱᴇᴀꜱᴏɴ",  callback_data=f"seasons#{key}#0")
+                    InlineKeyboardButton("🎄ᴘɪxᴇʟ🎄", callback_data=f"qualities#{key}#0"),
+                    InlineKeyboardButton("🌨ʟᴀɴɢᴜᴀɢᴇ🌨", callback_data=f"languages#{key}#0"),
+                    InlineKeyboardButton("🎊ꜱᴇᴀꜱᴏɴ🎊",  callback_data=f"seasons#{key}#0")
                 ]
             )
             btn.insert(1, [
-                InlineKeyboardButton("📥 Sᴇɴᴅ Aʟʟ 📥", callback_data=f"sendfiles#{key}") 
+                InlineKeyboardButton("❄️ Sᴇɴᴅ Aʟʟ ❄️", callback_data=f"sendfiles#{key}") 
            
             ])
         try:
