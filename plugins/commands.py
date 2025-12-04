@@ -364,7 +364,7 @@ async def start(client, message):
                     )
                     # Apply the Christmas greeting replacement
                     f_caption = await apply_christmas_greet(f_caption)
-                except Exception as e:
+                except:
                     logger.exception(e)
                     return
             await msg.edit_caption(f_caption)
