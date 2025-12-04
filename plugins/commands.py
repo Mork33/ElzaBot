@@ -21,7 +21,6 @@ from database.users_chats_db import db
 from info import *
 from utils import *
 from utils import apply_christmas_greet
-Christmas_greet = apply_christmas_greet()
 
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
