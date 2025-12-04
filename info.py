@@ -2,7 +2,7 @@ import re
 import os
 from os import environ, getenv
 from Script import script
-from utils import apply_christmas_greet 
+ 
 id_pattern = re.compile(r'^.\d+$')
 
 def is_enabled(value, default):
