@@ -150,7 +150,22 @@ CHRISTMAS_GREETINGS_LIST = [
     "⛄ Sending you warm Christmas hugs and festive cheer! 🎅",
     "🌟 May your days be merry and bright this Christmas! ✨",
     "🎄 Peace, joy, and love this Christmas season! ❤️",
-    "🎅 Believe in the magic of Christmas! Make a wish! ⭐"
+    "🎅 Believe in the magic of Christmas! Make a wish! ⭐",
+    "🎄 May your Christmas glow with warmth, love, and joy! ✨",
+    "❄️ Sending snowflakes of happiness and cheer your way! 🎁",
+    "🎅 Wishing you cozy nights and warm festive memories! 🌟",
+    "✨ May this Christmas wrap you in peace and love! 🎄",
+    "🎁 Hope your Christmas shines brighter than the stars! ⭐",
+    "⛄ Warm hugs and winter smiles for a joyful Christmas! 🎄",
+    "🌟 May your heart shine bright with Christmas magic! 🎅",
+    "🎄 Wishing you comfort, joy, and beautiful moments! ✨",
+    "❄️ May this season bring you happiness that stays forever! ❤️",
+    "🎅 Sending festive cheer straight to your heart! 🎄",
+    "✨ May your Christmas be sweet, bright, and magical! 🎁",
+    "🎁 Hope Santa fills your home with joy and wonder! 🎄",
+    "⛄ Celebrate Christmas with warmth, peace, and smiles! 🌟",
+    "🌟 Wishing you a sparkling Christmas and joyful moments! 🎅",
+    "🎄 May happiness surround you like snowflakes this Christmas! ❄️"
 ]
 STICKER_DELETE_TIME = 2.5
 
