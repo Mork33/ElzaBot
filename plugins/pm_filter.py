@@ -2090,7 +2090,7 @@ async def auto_filter(client, msg, spoll=False):
             for file_num, file in enumerate(files, start=1):
                 cap += f"\n\n<b>{file_num}. <a href='https://telegram.me/{temp.U_NAME}?start=file_{message.chat.id}_{file.file_id}'>{get_size(file.file_size)} | {clean_filename(file.file_name)}</a></b>"
     else:
-    CHRISTMAS_GREETINGS = random.choice(CHRISTMAS_GREETINGS_LIST)
+        CHRISTMAS_GREETINGS = random.choice(CHRISTMAS_GREETINGS_LIST)
     
     if settings.get('button'):
         cap = f"<b><blockquote>Hᴇʏ,{message.from_user.mention}</blockquote>\n\n<blockquote>{CHRISTMAS_GREETINGS}</blockquote>\n\n📂 Hᴇʀᴇ I Fᴏᴜɴᴅ Fᴏʀ Yᴏᴜʀ Sᴇᴀʀᴄʜ <code>{search}</code></b>\n\n"
