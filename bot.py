@@ -11,7 +11,7 @@ import asyncio
 from datetime import date, datetime
 import pytz
 from aiohttp import web
-from database.ia_filterdb import Media, Media2
+from database.ia_filterdb import Media, Media2, initialize_cache
 from database.users_chats_db import db
 from info import *
 from utils import temp
@@ -78,6 +78,23 @@ async def SilentXBotz_start():
         print("Multiple Database Mode On. Now Files Will Be Save In Second DB If First DB Is Full")
     else:
         print("Single DB Mode On ! Files Will Be Save In First Database")
+    
+    # Initialize Database Cache
+    print("\n" + "="*60)
+    print("🔄 INITIALIZING DATABASE CACHE...")
+    print("="*60)
+    try:
+        await initialize_cache()
+        print("="*60)
+        print("✅ CACHE INITIALIZATION COMPLETED")
+        print("="*60 + "\n")
+    except Exception as e:
+        print("="*60)
+        print(f"❌ CACHE INITIALIZATION FAILED: {e}")
+        print("⚠️ Bot will continue with direct database queries")
+        print("="*60 + "\n")
+        logging.error(f"Failed to initialize cache: {e}")
+    
     me = await SilentX.get_me()
     temp.ME = me.id
     temp.U_NAME = me.username
