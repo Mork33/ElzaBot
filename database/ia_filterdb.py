@@ -31,7 +31,7 @@ logger.setLevel(logging.INFO)
 
 processed_movies = set()
 
-MONGODB_SIZE_LIMIT = (512 * 1024 * 1024) - (80 * 1024 * 1024) 
+MONGODB_SIZE_LIMIT = (512 * 1024 * 1024) - (80 * 1024 * 1024)
 
 # Optimized MongoDB connections with connection pooling
 client = AsyncIOMotorClient(
@@ -68,228 +68,276 @@ KEYWORDS_PATTERN = re.compile(
 )
 SPACES_PATTERN = re.compile(r"\s+")
 
-# ==================== FULL DATABASE CACHE ====================
-class DatabaseCache:
-    """Cache entire database in memory for faster searches"""
+# ============================================================================
+# PERSISTENT IN-MEMORY CACHE SYSTEM
+# ============================================================================
+
+class PersistentMediaCache:
+    """
+    Persistent in-memory cache that loads ALL database content on startup
+    and serves all search/pagination requests from memory (NO MongoDB queries)
+    """
+    
     def __init__(self):
-        self.media_cache = []  # List of all media documents
+        """Initialize persistent cache"""
+        self.all_files = []  # Complete list of ALL files from both DBs
+        self.total_count = 0
         self.is_loaded = False
-        self.last_updated = None
-        self.total_files = 0
-        self.cache_lock = asyncio.Lock()
+        self.load_timestamp = None
+        self.file_index_by_name = {}  # Fast lookup index
+        self.file_index_by_caption = {}  # Caption search index
+        self.file_index_by_type = defaultdict(list)  # Type-based index
         
-    async def initialize(self):
-        """Load entire database into memory"""
-        async with self.cache_lock:
-            if self.is_loaded:
-                LOGGER.info("Cache already loaded, skipping initialization")
-                return
+    async def load_complete_database(self):
+        """
+        Load ALL data from MongoDB into memory on bot startup
+        This runs ONCE when bot starts
+        """
+        try:
+            logger.info("=" * 80)
+            logger.info("🚀 INITIALIZING PERSISTENT CACHE - LOADING ALL DATABASE CONTENT")
+            logger.info("=" * 80)
             
-            LOGGER.info("Starting full database cache import...")
             start_time = datetime.utcnow()
             
-            try:
-                # Projection for optimal memory usage
-                projection = {
-                    '_id': 1,
-                    'file_id': 1,
-                    'file_ref': 1,
-                    'file_name': 1,
-                    'file_size': 1,
-                    'file_type': 1,
-                    'caption': 1,
-                    'mime_type': 1
-                }
+            # Projection for data retrieval
+            projection = {
+                'file_id': 1,
+                'file_ref': 1,
+                'file_name': 1,
+                'file_size': 1,
+                'file_type': 1,
+                'caption': 1,
+                'mime_type': 1
+            }
+            
+            if MULTIPLE_DB:
+                # Load from both databases
+                logger.info("📂 Loading from PRIMARY database...")
+                count1 = await Media.count_documents({})
+                cursor1 = Media.find({}, projection).sort('$natural', -1)
+                files1 = await cursor1.to_list(length=count1) if count1 > 0 else []
+                logger.info(f"✅ Loaded {count1:,} files from PRIMARY database")
                 
-                if MULTIPLE_DB:
-                    # Load from both databases
-                    LOGGER.info("Loading from primary database...")
-                    cursor1 = db[COLLECTION_NAME].find({}, projection)
-                    files1 = await cursor1.to_list(length=None)
-                    
-                    LOGGER.info("Loading from secondary database...")
-                    cursor2 = db2[COLLECTION_NAME].find({}, projection)
-                    files2 = await cursor2.to_list(length=None)
-                    
-                    # Convert MongoDB documents to dict format
-                    self.media_cache = []
-                    for file in files1:
-                        self.media_cache.append(self._convert_doc(file))
-                    for file in files2:
-                        self.media_cache.append(self._convert_doc(file))
-                else:
-                    # Load from single database
-                    LOGGER.info("Loading from database...")
-                    cursor = db[COLLECTION_NAME].find({}, projection)
-                    files = await cursor.to_list(length=None)
-                    
-                    # Convert MongoDB documents to dict format
-                    self.media_cache = [self._convert_doc(file) for file in files]
+                logger.info("📂 Loading from SECONDARY database...")
+                count2 = await Media2.count_documents({})
+                cursor2 = Media2.find({}, projection).sort('$natural', -1)
+                files2 = await cursor2.to_list(length=count2) if count2 > 0 else []
+                logger.info(f"✅ Loaded {count2:,} files from SECONDARY database")
                 
-                self.total_files = len(self.media_cache)
-                self.last_updated = datetime.utcnow()
-                self.is_loaded = True
-                
-                elapsed = (datetime.utcnow() - start_time).total_seconds()
-                
-                LOGGER.info("="*60)
-                LOGGER.info("✓ CACHE IMPORTED SUCCESSFULLY")
-                LOGGER.info(f"✓ Total Files Cached: {self.total_files:,}")
-                LOGGER.info(f"✓ Cache Load Time: {elapsed:.2f} seconds")
-                LOGGER.info(f"✓ Memory Usage: ~{self._estimate_memory_mb():.2f} MB")
-                LOGGER.info("="*60)
-                
-            except Exception as e:
-                LOGGER.error(f"❌ Failed to initialize cache: {e}")
-                self.is_loaded = False
-                raise
-    
-    def _convert_doc(self, doc):
-        """Convert MongoDB document to cache-friendly dict - handles both dict and umongo objects"""
-        # Handle umongo Document objects
-        if hasattr(doc, 'dump'):
-            doc = doc.dump()
-        
-        # Now doc is guaranteed to be a dict
-        return {
-            'file_id': doc.get('_id') or doc.get('file_id'),
-            'file_ref': doc.get('file_ref'),
-            'file_name': doc.get('file_name', ''),
-            'file_size': doc.get('file_size', 0),
-            'file_type': doc.get('file_type'),
-            'caption': doc.get('caption'),
-            'mime_type': doc.get('mime_type')
-        }
-    
-    def _estimate_memory_mb(self):
-        """Estimate memory usage of cache"""
-        if not self.media_cache:
-            return 0
-        # Rough estimate: ~500 bytes per document on average
-        return (self.total_files * 500) / (1024 * 1024)
-    
-    async def add_to_cache(self, file_data: dict):
-        """Add new file to cache"""
-        async with self.cache_lock:
-            self.media_cache.append(file_data)
-            self.total_files += 1
-            LOGGER.debug(f"Added file to cache. Total files: {self.total_files}")
-    
-    def search_in_memory(self, regex, file_type=None, use_caption=False):
-        """Search through cached data - synchronous for speed"""
-        results = []
-        
-        # Search through cache
-        for file in self.media_cache:
-            # Check file type filter
-            if file_type and file.get('file_type') != file_type:
-                continue
+                self.all_files = files1 + files2
+                self.total_count = count1 + count2
+            else:
+                # Load from single database
+                logger.info("📂 Loading from database...")
+                self.total_count = await Media.count_documents({})
+                cursor = Media.find({}, projection).sort('$natural', -1)
+                self.all_files = await cursor.to_list(length=self.total_count) if self.total_count > 0 else []
+                logger.info(f"✅ Loaded {self.total_count:,} files from database")
             
-            # Check file name match
-            file_name = file.get('file_name', '')
-            if file_name and regex.search(file_name):
-                results.append(file)
-                continue
+            # Build search indexes
+            logger.info("🔍 Building search indexes...")
+            self._build_indexes()
             
-            # Check caption match if enabled
-            if use_caption:
-                caption = file.get('caption', '')
-                if caption and regex.search(caption):
-                    results.append(file)
-        
-        return results
-    
-    async def search(self, regex, file_type=None, use_caption=False, offset=0, limit=10):
-        """Search through cached data"""
-        if not self.is_loaded:
-            LOGGER.warning("Cache not loaded yet, returning None for fallback")
-            return None
-        
-        try:
-            # Perform search in memory (no async needed for list iteration)
-            results = self.search_in_memory(regex, file_type, use_caption)
+            self.is_loaded = True
+            self.load_timestamp = datetime.utcnow()
             
-            total_results = len(results)
+            elapsed = (datetime.utcnow() - start_time).total_seconds()
             
-            # Apply pagination
-            paginated_results = results[offset:offset + limit]
+            logger.info("=" * 80)
+            logger.info("✅ CACHE IMPORT SUCCESSFUL!")
+            logger.info("=" * 80)
+            logger.info(f"📊 Total Files Cached: {self.total_count:,}")
+            logger.info(f"⚡ Load Time: {elapsed:.2f} seconds")
+            logger.info(f"💾 Estimated Memory: {(self.total_count * 0.002):.2f} MB")
+            logger.info(f"🕐 Cache Initialized At: {self.load_timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+            logger.info("🎯 All searches will now use in-memory cache (NO MongoDB queries)")
+            logger.info("=" * 80)
             
-            next_offset = offset + len(paginated_results)
-            if next_offset >= total_results:
-                next_offset = ''
-            
-            LOGGER.debug(f"Cache search: found {total_results} results, returning {len(paginated_results)}")
-            return paginated_results, next_offset, total_results
+            return True
             
         except Exception as e:
-            LOGGER.error(f"Error during cache search: {e}")
-            return None
+            logger.error("=" * 80)
+            logger.error(f"❌ CACHE INITIALIZATION FAILED: {e}")
+            logger.error("=" * 80)
+            self.is_loaded = False
+            return False
     
-    async def get_file_by_id(self, file_id: str):
-        """Get file from cache by file_id"""
-        if not self.is_loaded:
-            return None
+    def _build_indexes(self):
+        """Build fast lookup indexes for searching"""
+        logger.info("🔨 Building file name index...")
+        for idx, file in enumerate(self.all_files):
+            # File name index (lowercase for case-insensitive search)
+            file_name = getattr(file, 'file_name', '').lower()
+            if file_name:
+                if file_name not in self.file_index_by_name:
+                    self.file_index_by_name[file_name] = []
+                self.file_index_by_name[file_name].append(idx)
+            
+            # Caption index
+            caption = getattr(file, 'caption', '')
+            if caption:
+                caption_lower = caption.lower()
+                if caption_lower not in self.file_index_by_caption:
+                    self.file_index_by_caption[caption_lower] = []
+                self.file_index_by_caption[caption_lower].append(idx)
+            
+            # File type index
+            file_type = getattr(file, 'file_type', None)
+            if file_type:
+                self.file_index_by_type[file_type].append(idx)
         
-        for file in self.media_cache:
-            if file.get('file_id') == file_id:
-                return [file]
-        return []
+        logger.info(f"✅ Indexed {len(self.file_index_by_name)} unique file names")
+        logger.info(f"✅ Indexed {len(self.file_index_by_caption)} unique captions")
+        logger.info(f"✅ Indexed {len(self.file_index_by_type)} file types")
     
-    async def refresh_cache(self):
-        """Refresh the entire cache"""
-        LOGGER.info("Refreshing database cache...")
-        self.is_loaded = False
-        self.media_cache.clear()
-        self.total_files = 0
-        await self.initialize()
+    def search_in_cache(self, query: str, file_type: Optional[str] = None) -> List:
+        """
+        Search cached files (NO MongoDB query)
+        
+        Args:
+            query: Search query
+            file_type: Optional file type filter
+            
+        Returns:
+            List of matching file indices
+        """
+        if not self.is_loaded:
+            logger.warning("⚠️ Cache not loaded! Returning empty results.")
+            return []
+        
+        # Compile regex for search
+        regex = get_compiled_regex(query)
+        if not regex:
+            return []
+        
+        matching_indices = []
+        
+        # Search through all files
+        for idx, file in enumerate(self.all_files):
+            # File type filter
+            if file_type:
+                current_file_type = getattr(file, 'file_type', None)
+                if current_file_type != file_type:
+                    continue
+            
+            # Search in file name
+            file_name = getattr(file, 'file_name', '')
+            if regex.search(file_name):
+                matching_indices.append(idx)
+                continue
+            
+            # Search in caption if enabled
+            if USE_CAPTION_FILTER:
+                caption = getattr(file, 'caption', '')
+                if caption and regex.search(caption):
+                    matching_indices.append(idx)
+        
+        return matching_indices
     
-    def get_stats(self):
-        """Get cache statistics"""
+    def get_page(self, matching_indices: List[int], offset: int, max_results: int) -> Tuple[List, str, int]:
+        """
+        Get a specific page from search results
+        
+        Args:
+            matching_indices: List of matching file indices from search
+            offset: Starting position
+            max_results: Number of results per page
+            
+        Returns:
+            Tuple of (page_files, next_offset, total_count)
+        """
+        total_count = len(matching_indices)
+        
+        # Extract indices for current page
+        page_indices = matching_indices[offset:offset + max_results]
+        
+        # Get actual file objects
+        page_files = [self.all_files[idx] for idx in page_indices]
+        
+        # Calculate next offset
+        next_offset = offset + len(page_files)
+        if next_offset >= total_count:
+            next_offset = ''
+        
+        return (page_files, next_offset, total_count)
+    
+    def add_file_to_cache(self, file_data: dict):
+        """
+        Add newly saved file to cache (keeps cache in sync)
+        
+        Args:
+            file_data: File document to add
+        """
+        if not self.is_loaded:
+            return
+        
+        self.all_files.insert(0, file_data)  # Add to beginning (newest first)
+        self.total_count += 1
+        
+        # Update indexes
+        file_name = getattr(file_data, 'file_name', '').lower()
+        if file_name:
+            if file_name not in self.file_index_by_name:
+                self.file_index_by_name[file_name] = []
+            self.file_index_by_name[file_name].insert(0, 0)
+        
+        # Increment all other indices by 1
+        for indices in self.file_index_by_name.values():
+            for i in range(len(indices)):
+                if indices[i] > 0:
+                    indices[i] += 1
+        
+        logger.info(f"➕ Added new file to cache. Total: {self.total_count:,}")
+    
+    def get_cache_info(self) -> Dict:
+        """Get cache status information"""
         return {
-            "is_loaded": self.is_loaded,
-            "total_files": self.total_files,
-            "last_updated": self.last_updated,
-            "memory_mb": self._estimate_memory_mb()
+            'is_loaded': self.is_loaded,
+            'total_files': self.total_count,
+            'load_timestamp': self.load_timestamp.isoformat() if self.load_timestamp else None,
+            'memory_estimate_mb': self.total_count * 0.002,
+            'indexed_names': len(self.file_index_by_name),
+            'indexed_captions': len(self.file_index_by_caption),
+            'indexed_types': len(self.file_index_by_type)
         }
 
-# Global cache instance
-db_cache = DatabaseCache()
+# Initialize global persistent cache
+persistent_cache = PersistentMediaCache()
 
-# Search result cache (for frequently searched queries)
-class SearchCache:
-    def __init__(self, ttl_minutes=5, max_size=1000):
-        self.cache = {}
-        self.ttl = timedelta(minutes=ttl_minutes)
-        self.max_size = max_size
+# ============================================================================
+# BOT STARTUP INITIALIZATION
+# ============================================================================
+
+async def initialize_cache_on_startup():
+    """
+    MUST BE CALLED when bot starts!
+    Add this to your bot's startup sequence:
     
-    def get(self, key: str) -> Optional[Tuple]:
-        if key in self.cache:
-            result, timestamp = self.cache[key]
-            if datetime.utcnow() - timestamp < self.ttl:
-                return result
-            else:
-                del self.cache[key]
-        return None
-    
-    def set(self, key: str, value: Tuple):
-        # Keep cache size manageable
-        if len(self.cache) >= self.max_size:
-            # Remove oldest 10% of entries
-            oldest_keys = sorted(
-                self.cache.keys(), 
-                key=lambda k: self.cache[k][1]
-            )[:int(self.max_size * 0.1)]
-            for k in oldest_keys:
-                del self.cache[k]
+    Example in main.py:
+        from database import initialize_cache_on_startup
         
-        self.cache[key] = (value, datetime.utcnow())
+        @bot.on_message(...)
+        async def start():
+            await initialize_cache_on_startup()
+            # rest of your code
+    """
+    global persistent_cache
     
-    def clear(self):
-        self.cache.clear()
+    if not persistent_cache.is_loaded:
+        success = await persistent_cache.load_complete_database()
+        if not success:
+            logger.error("❌ Failed to initialize cache! Bot will not function properly.")
+            return False
+    else:
+        logger.info("✅ Cache already loaded, skipping re-initialization")
+    
+    return True
 
-search_cache = SearchCache(ttl_minutes=5, max_size=1000)
+# ============================================================================
+# OPTIMIZED REGEX CACHING
+# ============================================================================
 
-# Optimized regex pattern caching
 @lru_cache(maxsize=1000)
 def get_compiled_regex(query: str):
     """Cache compiled regex patterns to avoid recompilation"""
@@ -297,7 +345,7 @@ def get_compiled_regex(query: str):
     if not query:
         raw_pattern = '.'
     elif ' ' not in query:
-        raw_pattern = r'(\b|[\.\+\-_])' + re.escape(query) + r'(\b|[\.\+\-_])'
+        raw_pattern = r'(\b|[\.\+\-_])' + query + r'(\b|[\.\+\-_])'
     else:
         raw_pattern = query.replace(' ', r'.*[\s\.\+\-_()]')
     
@@ -305,6 +353,10 @@ def get_compiled_regex(query: str):
         return re.compile(raw_pattern, flags=re.IGNORECASE)
     except:
         return None
+
+# ============================================================================
+# DATABASE MODELS
+# ============================================================================
 
 @instance.register
 class Media(Document):
@@ -317,12 +369,11 @@ class Media(Document):
     caption = fields.StrField(allow_none=True)
     
     class Meta:
-        # Optimized indexes for faster queries
         indexes = (
-            '$file_name',  # Text index for search
-            [('file_name', 1), ('file_type', 1)],  # Compound index
-            [('caption', 1)],  # Caption search index
-            [('file_type', 1)],  # File type filtering
+            '$file_name',
+            [('file_name', 1), ('file_type', 1)],
+            [('caption', 1)],
+            [('file_type', 1)],
         )
         collection_name = COLLECTION_NAME
 
@@ -337,14 +388,17 @@ class Media2(Document):
     caption = fields.StrField(allow_none=True)
     
     class Meta:
-        # Optimized indexes for faster queries
         indexes = (
-            '$file_name',  # Text index for search
-            [('file_name', 1), ('file_type', 1)],  # Compound index
-            [('caption', 1)],  # Caption search index
-            [('file_type', 1)],  # File type filtering
+            '$file_name',
+            [('file_name', 1), ('file_type', 1)],
+            [('caption', 1)],
+            [('file_type', 1)],
         )
         collection_name = COLLECTION_NAME
+
+# ============================================================================
+# DATABASE UTILITY FUNCTIONS
+# ============================================================================
 
 async def check_db_size(db, cache):
     try:
@@ -355,7 +409,7 @@ async def check_db_size(db, cache):
             return cache["primary_size"]
         dbstats = await db.command("dbStats")
         db_size = dbstats['dataSize']
-        db_size_mb = db_size / (1024 * 1024) 
+        db_size_mb = db_size / (1024 * 1024)
         cache["primary_size"] = db_size_mb
         cache["timestamp"] = now
         return db_size_mb
@@ -364,9 +418,9 @@ async def check_db_size(db, cache):
         return 0
 
 async def save_file(media):
+    """Save file to MongoDB and update cache"""
     file_id, file_ref = unpack_new_file_id(media.file_id)
     
-    # Optimized file name cleaning with pre-compiled patterns
     file_name = SPECIAL_CHARS_PATTERN.sub(" ", str(media.file_name))
     file_name = KEYWORDS_PATTERN.sub(" ", file_name)
     file_name = SPACES_PATTERN.sub(" ", file_name).strip()
@@ -392,17 +446,8 @@ async def save_file(media):
         )
         await file.commit()
         
-        # Add to cache
-        file_data = {
-            'file_id': file_id,
-            'file_ref': file_ref,
-            'file_name': file_name,
-            'file_size': media.file_size,
-            'file_type': media.file_type,
-            'mime_type': media.mime_type,
-            'caption': media.caption.html if media.caption else None
-        }
-        await db_cache.add_to_cache(file_data)
+        # Add to persistent cache
+        persistent_cache.add_file_to_cache(file)
         
     except DuplicateKeyError:
         LOGGER.error(f'{file_name} Is Already Saved In {"Secondary" if use_secondary else "Primary"} Database')
@@ -414,13 +459,33 @@ async def save_file(media):
         LOGGER.info(f'{file_name} Saved Successfully In {"Secondary" if use_secondary else "Primary"} Database')
         return True, 1
 
-def _safe_get_attr(obj, attr, default=''):
-    """Safely get attribute from object or dict"""
-    if isinstance(obj, dict):
-        return obj.get(attr, default)
-    return getattr(obj, attr, default)
+# ============================================================================
+# MAIN SEARCH FUNCTION (USES PERSISTENT CACHE)
+# ============================================================================
 
 async def get_search_results(chat_id, query, file_type=None, max_results=10, offset=0, filter=False):
+    """
+    SEARCH USING PERSISTENT IN-MEMORY CACHE (NO MongoDB QUERIES)
+    
+    All searches happen in memory - super fast!
+    
+    Args:
+        chat_id: Chat ID for settings
+        query: Search query (e.g., "my demon")
+        file_type: Optional file type filter
+        max_results: Results per page
+        offset: Pagination offset
+        filter: Additional filter flag
+        
+    Returns:
+        Tuple of (files, next_offset, total_count)
+    """
+    
+    # Check if cache is loaded
+    if not persistent_cache.is_loaded:
+        logger.error("❌ Cache not loaded! Cannot perform search.")
+        return [], '', 0
+    
     # Get settings
     if chat_id is not None:
         settings = await get_settings(int(chat_id))
@@ -431,181 +496,41 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
             settings = await get_settings(int(chat_id))
             max_results = 10 if settings.get('max_btn') else int(MAX_B_TN)
 
-    # Check search result cache first
-    cache_key = f"{chat_id}:{query}:{file_type}:{max_results}:{offset}"
-    cached_result = search_cache.get(cache_key)
-    if cached_result:
-        LOGGER.debug(f"Returning cached search result for: {query}")
-        return cached_result
-
-    # Use cached compiled regex
-    regex = get_compiled_regex(query)
-    if not regex:
-        LOGGER.warning(f"Failed to compile regex for query: {query}")
-        return [], '', 0
-
     # Ensure max_results is even
     if max_results % 2 != 0:
         logger.info(f"Since max_results Is An Odd Number ({max_results}), Bot Will Use {max_results + 1} As max_results To Make It Even.")
         max_results += 1
 
-    # Try to search from cache first
-    LOGGER.debug(f"Attempting cache search for: {query}")
-    cache_result = await db_cache.search(
-        regex=regex,
-        file_type=file_type,
-        use_caption=USE_CAPTION_FILTER,
-        offset=offset,
-        limit=max_results
+    # Search in persistent cache (NO MongoDB query!)
+    logger.info(f"🔍 Searching in cache for '{query}' (type: {file_type})")
+    matching_indices = persistent_cache.search_in_cache(query, file_type)
+    
+    # Get paginated results
+    page_files, next_offset, total_count = persistent_cache.get_page(
+        matching_indices, offset, max_results
     )
     
-    if cache_result is not None:
-        # Cache hit - return results from memory
-        files, next_offset, total_results = cache_result
-        LOGGER.info(f"Cache hit for '{query}': found {total_results} results, returning {len(files)} files")
-        result = (files, next_offset, total_results)
-        search_cache.set(cache_key, result)
-        return result
+    logger.info(f"✅ Found {total_count} results for '{query}', returning {len(page_files)} files (offset: {offset})")
     
-    # Fallback to database search if cache not ready
-    LOGGER.warning(f"Cache not ready - falling back to database search for: {query}")
-    
-    # Build filter query
-    if USE_CAPTION_FILTER:
-        filter_query = {'$or': [{'file_name': regex}, {'caption': regex}]}
-    else:
-        filter_query = {'file_name': regex}
-    
-    if file_type:
-        filter_query['file_type'] = file_type
+    return page_files, next_offset, total_count
 
-    # Projection for faster data retrieval
-    projection = {
-        '_id': 1,
-        'file_id': 1,
-        'file_ref': 1,
-        'file_name': 1,
-        'file_size': 1,
-        'file_type': 1,
-        'caption': 1,
-        'mime_type': 1
-    }
-
-    if MULTIPLE_DB:
-        # Parallel queries for both databases
-        total_results_task1 = Media.count_documents(filter_query)
-        total_results_task2 = Media2.count_documents(filter_query)
-        
-        cursor1 = Media.find(filter_query, projection).sort('$natural', -1).skip(offset).limit(max_results)
-        cursor2 = Media2.find(filter_query, projection).sort('$natural', -1).skip(offset).limit(max_results)
-        
-        # Execute all queries in parallel
-        results = await asyncio.gather(
-            total_results_task1,
-            total_results_task2,
-            cursor1.to_list(length=max_results),
-            cursor2.to_list(length=max_results)
-        )
-        
-        total_results = results[0] + results[1]
-        files1 = results[2]
-        files2 = results[3]
-        
-        # Merge results and limit to max_results
-        files = (files1 + files2)[:max_results]
-    else:
-        total_results = await Media.count_documents(filter_query)
-        cursor1 = Media.find(filter_query, projection).sort('$natural', -1).skip(offset).limit(max_results)
-        files = await cursor1.to_list(length=max_results)
-    
-    # Convert to dicts - handle both umongo objects and raw dicts
-    converted_files = []
-    for f in files:
-        if hasattr(f, 'dump'):
-            converted_files.append(db_cache._convert_doc(f.dump()))
-        else:
-            converted_files.append(db_cache._convert_doc(f))
-    files = converted_files
-    
-    next_offset = offset + len(files)
-    if next_offset >= total_results:
-        next_offset = ''
-    
-    result = (files, next_offset, total_results)
-    
-    # Cache the result
-    search_cache.set(cache_key, result)
-    
-    LOGGER.info(f"Database search for '{query}': found {total_results} results")
-    return result
+# ============================================================================
+# OTHER DATABASE FUNCTIONS
+# ============================================================================
 
 async def get_bad_files(query, file_type=None):
-    # Use cached compiled regex
-    regex = get_compiled_regex(query)
-    if not regex:
+    """Get files for deletion/management - uses cache"""
+    if not persistent_cache.is_loaded:
+        logger.error("❌ Cache not loaded!")
         return [], 0
     
-    # Try cache first
-    cache_result = await db_cache.search(
-        regex=regex,
-        file_type=file_type,
-        use_caption=USE_CAPTION_FILTER,
-        offset=0,
-        limit=999999  # Get all results
-    )
+    matching_indices = persistent_cache.search_in_cache(query, file_type)
+    files = [persistent_cache.all_files[idx] for idx in matching_indices]
     
-    if cache_result is not None:
-        files, _, total_results = cache_result
-        return files, total_results
-    
-    # Fallback to database
-    if USE_CAPTION_FILTER:
-        filter_query = {'$or': [{'file_name': regex}, {'caption': regex}]}
-    else:
-        filter_query = {'file_name': regex}
-    
-    if file_type:
-        filter_query['file_type'] = file_type
-    
-    if MULTIPLE_DB:
-        cursor1 = Media.find(filter_query).sort('$natural', -1)
-        cursor2 = Media2.find(filter_query).sort('$natural', -1)
-        
-        count_task1 = Media.count_documents(filter_query)
-        count_task2 = Media2.count_documents(filter_query)
-        
-        results = await asyncio.gather(
-            count_task1,
-            count_task2,
-            cursor1.to_list(length=await count_task1),
-            cursor2.to_list(length=await count_task2)
-        )
-        
-        files = results[2] + results[3]
-    else:
-        count = await Media.count_documents(filter_query)
-        cursor1 = Media.find(filter_query).sort('$natural', -1)
-        files = await cursor1.to_list(length=count)
-    
-    # Convert to dict format - handle both types
-    converted_files = []
-    for f in files:
-        if hasattr(f, 'dump'):
-            converted_files.append(db_cache._convert_doc(f.dump()))
-        else:
-            converted_files.append(db_cache._convert_doc(f))
-    files = converted_files
-    
-    total_results = len(files)
-    return files, total_results
+    return files, len(files)
 
 async def get_file_details(query):
-    # Try cache first
-    cached_file = await db_cache.get_file_by_id(query)
-    if cached_file:
-        return cached_file
-    
-    # Fallback to database
+    """Get details of a specific file by file_id - uses MongoDB for precise lookup"""
     filter_query = {'file_id': query}
     
     if MULTIPLE_DB:
@@ -621,16 +546,6 @@ async def get_file_details(query):
     else:
         cursor = Media.find(filter_query)
         filedetails = await cursor.to_list(length=1)
-    
-    # Convert to dict format - handle both types
-    if filedetails:
-        converted_details = []
-        for f in filedetails:
-            if hasattr(f, 'dump'):
-                converted_details.append(db_cache._convert_doc(f.dump()))
-            else:
-                converted_details.append(db_cache._convert_doc(f))
-        filedetails = converted_details
     
     return filedetails
 
@@ -664,34 +579,23 @@ def unpack_new_file_id(new_file_id):
     file_ref = encode_file_ref(decoded.file_reference)
     return file_id, file_ref
 
+# ============================================================================
+# MOVIE/SERIES FUNCTIONS
+# ============================================================================
+
 async def siletxbotz_fetch_media(limit: int) -> List[dict]:
-    try:
-        # Use cache if available
-        if db_cache.is_loaded:
-            return db_cache.media_cache[:limit]
-        
-        # Fallback to database
-        projection = {'file_name': 1, 'caption': 1}
-        
-        if MULTIPLE_DB:
-            db_size = await check_db_size(db, _db_stats_cache_primary)
-            if db_size > DB_CHANGE_LIMIT:
-                cursor = Media2.find({}, projection).sort("$natural", -1).limit(limit)
-                files = await cursor.to_list(length=limit)
-                return files
-        
-        cursor = Media.find({}, projection).sort("$natural", -1).limit(limit)
-        files = await cursor.to_list(length=limit)
-        return files
-    except Exception as e:
-        LOGGER.error(f"Error in siletxbotz_fetch_media: {e}")
+    """Fetch recent media from cache"""
+    if not persistent_cache.is_loaded:
         return []
+    
+    # Return first N files from cache (already sorted by newest)
+    return persistent_cache.all_files[:limit]
 
 async def silentxbotz_clean_title(filename: str, is_series: bool = False) -> str:
     try:
         year_match = re.search(r"^(.*?(\d{4}|\(\d{4}\)))", filename, re.IGNORECASE)
         if year_match:
-            title = year_match.group(1).replace('(', '').replace(')', '') 
+            title = year_match.group(1).replace('(', '').replace(')', '')
             return re.sub(r"[._\-\[\]@()]+", " ", title).strip().title()
         
         if is_series:
@@ -714,9 +618,8 @@ async def siletxbotz_get_movies(limit: int = 20) -> List[str]:
         pattern = r"(?:s\d{1,2}|season\s*\d+|season\d+)(?:\s*combined)?(?:e\d{1,2}|episode\s*\d+)?\b"
         
         for file in cursor:
-            # Handle both dict and object attributes safely
-            file_name = _safe_get_attr(file, "file_name", "")
-            caption = _safe_get_attr(file, "caption", "")
+            file_name = getattr(file, "file_name", "")
+            caption = getattr(file, "caption", "")
             
             if not (re.search(pattern, file_name, re.IGNORECASE) or re.search(pattern, caption, re.IGNORECASE)):
                 title = await silentxbotz_clean_title(file_name)
@@ -737,9 +640,8 @@ async def siletxbotz_get_series(limit: int = 30) -> Dict[str, List[int]]:
         pattern = r"(.*?)(?:S(\d{1,2})|Season\s*(\d+)|Season(\d+))(?:\s*Combined)?(?:E(\d{1,2})|Episode\s*(\d+))?\b"
         
         for file in cursor:
-            # Handle both dict and object attributes safely
-            file_name = _safe_get_attr(file, "file_name", "")
-            caption = _safe_get_attr(file, "caption", "")
+            file_name = getattr(file, "file_name", "")
+            caption = getattr(file, "caption", "")
             
             match = None
             if file_name:
@@ -755,24 +657,46 @@ async def siletxbotz_get_series(limit: int = 30) -> Dict[str, List[int]]:
         return {title: sorted(set(seasons))[:10] for title, seasons in grouped.items() if seasons}
     except Exception as e:
         logger.error(f"Error in siletxbotz_get_series: {e}")
-        return {}
+        return []
 
-# Utility functions
-def clear_search_cache():
-    """Clear the search cache - useful after bulk updates"""
-    search_cache.clear()
-    get_compiled_regex.cache_clear()
-    logger.info("Search cache cleared successfully")
+# ============================================================================
+# CACHE MANAGEMENT FUNCTIONS
+# ============================================================================
 
-async def refresh_full_cache():
-    """Refresh the full database cache"""
-    await db_cache.refresh_cache()
+async def reload_cache():
+    """
+    Reload entire cache from database
+    Use after: Bulk updates, database maintenance
+    """
+    logger.info("🔄 Reloading cache from database...")
+    global persistent_cache
+    persistent_cache = PersistentMediaCache()
+    success = await persistent_cache.load_complete_database()
+    return success
 
-def get_cache_stats():
-    """Get cache statistics"""
-    return db_cache.get_stats()
+def get_cache_stats() -> Dict:
+    """
+    Get detailed cache statistics for monitoring
+    
+    Returns:
+        Dict with cache metrics
+    """
+    stats = persistent_cache.get_cache_info()
+    logger.info(f"📊 Cache Stats: {stats}")
+    return stats
 
-# Initialize cache on module import (call this from your main bot file)
-async def initialize_cache():
-    """Initialize the database cache - call this when bot starts"""
-    await db_cache.initialize()
+def log_cache_performance():
+    """Log current cache performance metrics"""
+    stats = get_cache_stats()
+    logger.info("=" * 80)
+    logger.info("CACHE PERFORMANCE REPORT")
+    logger.info("=" * 80)
+    logger.info(f"Cache Loaded: {stats['is_loaded']}")
+    logger.info(f"Total Files Cached: {stats['total_files']:,}")
+    logger.info(f"Indexed File Names: {stats['indexed_names']:,}")
+    logger.info(f"Indexed Captions: {stats['indexed_captions']:,}")
+    logger.info(f"Indexed Types: {stats['indexed_types']}")
+    logger.info(f"Estimated Memory: {stats['memory_estimate_mb']:.2f} MB")
+    if stats['load_timestamp']:
+        logger.info(f"Loaded At: {stats['load_timestamp']}")
+    logger.info("=" * 80)
