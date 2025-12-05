@@ -68,39 +68,163 @@ KEYWORDS_PATTERN = re.compile(
 )
 SPACES_PATTERN = re.compile(r"\s+")
 
-# Search result cache
-class SearchCache:
-    def __init__(self, ttl_minutes=5, max_size=1000):
+# Enhanced Full Result Cache for pagination
+class FullResultCache:
+    def __init__(self, ttl_minutes=15, max_cache_size=100):
+        """
+        Cache complete search results for instant pagination
+        
+        Args:
+            ttl_minutes: Time to live for cache entries (default: 15 minutes)
+            max_cache_size: Maximum number of search queries to cache (default: 100)
+        """
         self.cache = {}
         self.ttl = timedelta(minutes=ttl_minutes)
-        self.max_size = max_size
+        self.max_cache_size = max_cache_size
+        self.access_count = {}  # Track access frequency for smart eviction
+        
+    def _generate_key(self, chat_id, query: str, file_type: Optional[str]) -> str:
+        """Generate a unique cache key"""
+        return f"{chat_id}:{query.lower().strip()}:{file_type or 'all'}"
     
-    def get(self, key: str) -> Optional[Tuple]:
+    def get(self, chat_id, query: str, file_type: Optional[str] = None) -> Optional[Dict]:
+        """
+        Get cached full results
+        
+        Returns:
+            Dict with 'files' (list), 'total_results' (int), 'timestamp' (datetime)
+            or None if not cached or expired
+        """
+        key = self._generate_key(chat_id, query, file_type)
+        
         if key in self.cache:
-            result, timestamp = self.cache[key]
+            cached_data = self.cache[key]
+            timestamp = cached_data['timestamp']
+            
+            # Check if cache is still valid
             if datetime.utcnow() - timestamp < self.ttl:
-                return result
+                # Update access count for LRU tracking
+                self.access_count[key] = self.access_count.get(key, 0) + 1
+                logger.info(f"Cache HIT for query: {query} (chat: {chat_id})")
+                return cached_data
             else:
-                del self.cache[key]
+                # Cache expired, remove it
+                logger.info(f"Cache EXPIRED for query: {query} (chat: {chat_id})")
+                self._remove_entry(key)
+        
+        logger.info(f"Cache MISS for query: {query} (chat: {chat_id})")
         return None
     
-    def set(self, key: str, value: Tuple):
-        # Keep cache size manageable
-        if len(self.cache) >= self.max_size:
-            # Remove oldest 10% of entries
-            oldest_keys = sorted(
-                self.cache.keys(), 
-                key=lambda k: self.cache[k][1]
-            )[:int(self.max_size * 0.1)]
-            for k in oldest_keys:
-                del self.cache[k]
+    def set(self, chat_id, query: str, file_type: Optional[str], 
+            files: List, total_results: int):
+        """
+        Cache complete search results
         
-        self.cache[key] = (value, datetime.utcnow())
+        Args:
+            chat_id: Chat ID
+            query: Search query
+            file_type: File type filter
+            files: Complete list of all files matching the query
+            total_results: Total count of results
+        """
+        key = self._generate_key(chat_id, query, file_type)
+        
+        # Evict entries if cache is full
+        if len(self.cache) >= self.max_cache_size:
+            self._evict_lru()
+        
+        self.cache[key] = {
+            'files': files,
+            'total_results': total_results,
+            'timestamp': datetime.utcnow(),
+            'query': query,
+            'file_type': file_type
+        }
+        self.access_count[key] = 1
+        
+        logger.info(f"Cached {total_results} results for query: {query} (chat: {chat_id})")
+    
+    def get_page(self, chat_id, query: str, file_type: Optional[str], 
+                 offset: int, limit: int) -> Optional[Tuple[List, str, int]]:
+        """
+        Get a specific page from cached results
+        
+        Returns:
+            Tuple of (files_page, next_offset, total_results) or None if not cached
+        """
+        cached_data = self.get(chat_id, query, file_type)
+        
+        if cached_data is None:
+            return None
+        
+        all_files = cached_data['files']
+        total_results = cached_data['total_results']
+        
+        # Calculate page slice
+        start_idx = offset
+        end_idx = offset + limit
+        
+        files_page = all_files[start_idx:end_idx]
+        
+        # Calculate next offset
+        next_offset = end_idx if end_idx < total_results else ''
+        
+        logger.info(f"Serving page (offset: {offset}, limit: {limit}) from cache for query: {query}")
+        
+        return (files_page, next_offset, total_results)
+    
+    def _evict_lru(self):
+        """Evict least recently/frequently used entries (10% of cache)"""
+        if not self.cache:
+            return
+        
+        # Calculate number of entries to evict
+        evict_count = max(1, int(self.max_cache_size * 0.1))
+        
+        # Sort by access count (ascending) to remove least used
+        sorted_keys = sorted(
+            self.access_count.keys(),
+            key=lambda k: self.access_count.get(k, 0)
+        )
+        
+        for key in sorted_keys[:evict_count]:
+            self._remove_entry(key)
+        
+        logger.info(f"Evicted {evict_count} entries from cache")
+    
+    def _remove_entry(self, key: str):
+        """Remove a single cache entry"""
+        if key in self.cache:
+            del self.cache[key]
+        if key in self.access_count:
+            del self.access_count[key]
     
     def clear(self):
+        """Clear all cache entries"""
         self.cache.clear()
+        self.access_count.clear()
+        logger.info("Full result cache cleared")
+    
+    def clear_chat(self, chat_id):
+        """Clear cache entries for a specific chat"""
+        keys_to_remove = [k for k in self.cache.keys() if k.startswith(f"{chat_id}:")]
+        for key in keys_to_remove:
+            self._remove_entry(key)
+        logger.info(f"Cleared cache for chat: {chat_id}")
+    
+    def get_stats(self) -> Dict:
+        """Get cache statistics"""
+        return {
+            'total_entries': len(self.cache),
+            'max_size': self.max_cache_size,
+            'ttl_minutes': self.ttl.total_seconds() / 60,
+            'total_files_cached': sum(len(v['files']) for v in self.cache.values())
+        }
 
-search_cache = SearchCache(ttl_minutes=5, max_size=1000)
+# Initialize the full result cache
+# TTL: 15 minutes (adjustable based on your needs)
+# Max cache size: 100 queries (adjustable based on memory)
+full_result_cache = FullResultCache(ttl_minutes=15, max_cache_size=100)
 
 # Optimized regex pattern caching
 @lru_cache(maxsize=1000)
@@ -130,12 +254,11 @@ class Media(Document):
     caption = fields.StrField(allow_none=True)
     
     class Meta:
-        # Optimized indexes for faster queries
         indexes = (
-            '$file_name',  # Text index for search
-            [('file_name', 1), ('file_type', 1)],  # Compound index
-            [('caption', 1)],  # Caption search index
-            [('file_type', 1)],  # File type filtering
+            '$file_name',
+            [('file_name', 1), ('file_type', 1)],
+            [('caption', 1)],
+            [('file_type', 1)],
         )
         collection_name = COLLECTION_NAME
 
@@ -150,12 +273,11 @@ class Media2(Document):
     caption = fields.StrField(allow_none=True)
     
     class Meta:
-        # Optimized indexes for faster queries
         indexes = (
-            '$file_name',  # Text index for search
-            [('file_name', 1), ('file_type', 1)],  # Compound index
-            [('caption', 1)],  # Caption search index
-            [('file_type', 1)],  # File type filtering
+            '$file_name',
+            [('file_name', 1), ('file_type', 1)],
+            [('caption', 1)],
+            [('file_type', 1)],
         )
         collection_name = COLLECTION_NAME
 
@@ -179,7 +301,6 @@ async def check_db_size(db, cache):
 async def save_file(media):
     file_id, file_ref = unpack_new_file_id(media.file_id)
     
-    # Optimized file name cleaning with pre-compiled patterns
     file_name = SPECIAL_CHARS_PATTERN.sub(" ", str(media.file_name))
     file_name = KEYWORDS_PATTERN.sub(" ", file_name)
     file_name = SPACES_PATTERN.sub(" ", file_name).strip()
@@ -204,6 +325,10 @@ async def save_file(media):
             caption=media.caption.html if media.caption else None,
         )
         await file.commit()
+        
+        # Clear cache after new file is added to ensure fresh results
+        full_result_cache.clear()
+        
     except DuplicateKeyError:
         LOGGER.error(f'{file_name} Is Already Saved In {"Secondary" if use_secondary else "Primary"} Database')
         return False, 0
@@ -215,6 +340,12 @@ async def save_file(media):
         return True, 1
 
 async def get_search_results(chat_id, query, file_type=None, max_results=10, offset=0, filter=False):
+    """
+    Enhanced search with full result caching for instant pagination
+    
+    First search: Fetches all results and caches them
+    Subsequent pages: Served instantly from cache
+    """
     # Get settings
     if chat_id is not None:
         settings = await get_settings(int(chat_id))
@@ -225,13 +356,19 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
             settings = await get_settings(int(chat_id))
             max_results = 10 if settings.get('max_btn') else int(MAX_B_TN)
 
-    # Check cache first
-    cache_key = f"{chat_id}:{query}:{file_type}:{max_results}:{offset}"
-    cached_result = search_cache.get(cache_key)
-    if cached_result:
-        return cached_result
+    # Ensure max_results is even
+    if max_results % 2 != 0:
+        logger.info(f"Since max_results Is An Odd Number ({max_results}), Bot Will Use {max_results + 1} As max_results To Make It Even.")
+        max_results += 1
 
-    # Use cached compiled regex
+    # Try to get page from cache first
+    cached_page = full_result_cache.get_page(chat_id, query, file_type, offset, max_results)
+    if cached_page is not None:
+        return cached_page
+
+    # Cache miss - need to fetch all results from database
+    logger.info(f"Fetching ALL results from database for query: {query}")
+    
     regex = get_compiled_regex(query)
     if not regex:
         return [], '', 0
@@ -245,11 +382,6 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
     if file_type:
         filter_query['file_type'] = file_type
 
-    # Ensure max_results is even
-    if max_results % 2 != 0:
-        logger.info(f"Since max_results Is An Odd Number ({max_results}), Bot Will Use {max_results + 1} As max_results To Make It Even.")
-        max_results += 1
-
     # Projection for faster data retrieval
     projection = {
         'file_id': 1,
@@ -261,51 +393,52 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
         'mime_type': 1
     }
 
+    # Fetch ALL results (no limit) to cache them
     if MULTIPLE_DB:
         # Parallel queries for both databases
         total_results_task1 = Media.count_documents(filter_query)
         total_results_task2 = Media2.count_documents(filter_query)
         
-        cursor1 = Media.find(filter_query, projection).sort('$natural', -1).skip(offset).limit(max_results)
-        cursor2 = Media2.find(filter_query, projection).sort('$natural', -1).skip(offset).limit(max_results)
+        # Fetch ALL results from both databases
+        cursor1 = Media.find(filter_query, projection).sort('$natural', -1)
+        cursor2 = Media2.find(filter_query, projection).sort('$natural', -1)
         
         # Execute all queries in parallel
         results = await asyncio.gather(
             total_results_task1,
-            total_results_task2,
-            cursor1.to_list(length=max_results),
-            cursor2.to_list(length=max_results)
+            total_results_task2
         )
         
         total_results = results[0] + results[1]
-        files1 = results[2]
-        files2 = results[3]
         
-        # Merge results and limit to max_results
-        files = (files1 + files2)[:max_results]
+        # Fetch all files
+        files1 = await cursor1.to_list(length=results[0])
+        files2 = await cursor2.to_list(length=results[1])
+        
+        all_files = files1 + files2
     else:
         total_results = await Media.count_documents(filter_query)
-        cursor1 = Media.find(filter_query, projection).sort('$natural', -1).skip(offset).limit(max_results)
-        files = await cursor1.to_list(length=max_results)
+        cursor1 = Media.find(filter_query, projection).sort('$natural', -1)
+        all_files = await cursor1.to_list(length=total_results)
     
-    next_offset = offset + len(files)
+    # Cache all results for future pagination
+    full_result_cache.set(chat_id, query, file_type, all_files, total_results)
+    
+    # Return the requested page
+    files_page = all_files[offset:offset + max_results]
+    next_offset = offset + len(files_page)
     if next_offset >= total_results:
         next_offset = ''
     
-    result = (files, next_offset, total_results)
+    logger.info(f"Fetched and cached {total_results} results, returning page with {len(files_page)} files")
     
-    # Cache the result
-    search_cache.set(cache_key, result)
-    
-    return result
+    return files_page, next_offset, total_results
 
 async def get_bad_files(query, file_type=None):
-    # Use cached compiled regex
     regex = get_compiled_regex(query)
     if not regex:
         return [], 0
     
-    # Build filter query
     if USE_CAPTION_FILTER:
         filter_query = {'$or': [{'file_name': regex}, {'caption': regex}]}
     else:
@@ -315,7 +448,6 @@ async def get_bad_files(query, file_type=None):
         filter_query['file_type'] = file_type
     
     if MULTIPLE_DB:
-        # Parallel queries for both databases
         cursor1 = Media.find(filter_query).sort('$natural', -1)
         cursor2 = Media2.find(filter_query).sort('$natural', -1)
         
@@ -342,7 +474,6 @@ async def get_file_details(query):
     filter_query = {'file_id': query}
     
     if MULTIPLE_DB:
-        # Search both databases in parallel
         cursor1 = Media.find(filter_query)
         cursor2 = Media2.find(filter_query)
         
@@ -390,7 +521,6 @@ def unpack_new_file_id(new_file_id):
 
 async def siletxbotz_fetch_media(limit: int) -> List[dict]:
     try:
-        # Use projection to fetch only needed fields
         projection = {'file_name': 1, 'caption': 1}
         
         if MULTIPLE_DB:
@@ -475,9 +605,38 @@ async def siletxbotz_get_series(limit: int = 30) -> Dict[str, List[int]]:
         logger.error(f"Error in siletxbotz_get_series: {e}")
         return []
 
-# Utility function to clear cache if needed
+# Utility functions for cache management
 def clear_search_cache():
-    """Clear the search cache - useful after bulk updates"""
-    search_cache.clear()
+    """Clear the full result cache - useful after bulk updates"""
+    full_result_cache.clear()
     get_compiled_regex.cache_clear()
-    logger.info("Search cache cleared successfully")
+    logger.info("All search caches cleared successfully")
+
+def clear_chat_cache(chat_id):
+    """Clear cache for a specific chat"""
+    full_result_cache.clear_chat(chat_id)
+    logger.info(f"Cache cleared for chat: {chat_id}")
+
+def get_cache_stats() -> Dict:
+    """Get cache statistics for monitoring"""
+    return full_result_cache.get_stats()
+
+async def cache_popular_searches(queries: List[Tuple[str, Optional[str]]], chat_id: int = 0):
+    """
+    Pre-cache popular searches for better performance
+    
+    Args:
+        queries: List of (query, file_type) tuples to pre-cache
+        chat_id: Chat ID to cache for (default: 0 for global)
+    """
+    logger.info(f"Pre-caching {len(queries)} popular searches...")
+    
+    for query, file_type in queries:
+        try:
+            # This will fetch all results and cache them
+            await get_search_results(chat_id, query, file_type, max_results=10, offset=0)
+            logger.info(f"Pre-cached query: {query}")
+        except Exception as e:
+            logger.error(f"Error pre-caching query '{query}': {e}")
+    
+    logger.info("Pre-caching complete!")
