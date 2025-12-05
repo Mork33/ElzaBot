@@ -289,7 +289,7 @@ Mᴇꜱꜱᴀɢᴇ : <b>{}</b>
 
 🎅 ᴍᴇʀʀʏ ᴄʜʀɪꜱᴛᴍᴀꜱ! 🎁"""
     
-    CAPTION = """<b><a href="https://t.me/DramaShip">❄️{file_name}</a></b>\n<b>✪ size- {file_size}</b>\n\n<blockquote><b>{Christmas_greet}</b></blockquote>\n\n<b>🎅 Bot: @DramaShip1bot</b>\n\n<b>⚜️ Powered By : <a href="https://t.me/DramaShip">@ᴅʀᴀᴍᴀꜱʜɪᴘ</a></b>\n\n<b>🎁 ᴍᴇʀʀʏ ᴄʜʀɪꜱᴛᴍᴀꜱ! 🎄</b>"""
+    CAPTION = """<b><a href="https://t.me/DramaShip">❄️{file_name}</a></b>\n<b>✪ size- {file_size}</b>\n\n<blockquote><b>{Christmas_greet}</b></blockquote>\n\n<b>🎅 Bot1: @DramaShip1bot\n\n🎄 Bot2: @AnyDramaBot</b>\n\n<b> 🥂Powered By : <a href="https://t.me/DramaShip">@ᴅʀᴀᴍᴀꜱʜɪᴘ</a></b>\n\n<b>🎁 ᴍᴇʀʀʏ ᴄʜʀɪꜱᴛᴍᴀꜱ! 🎄</b>"""
 
     IMDB_TEMPLATE_TXT = """
 <b>🎄 🏷 Title</b>: <a href={url}>{title}</a>
