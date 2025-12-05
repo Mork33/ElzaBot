@@ -270,7 +270,7 @@ async def start(client, message):
             pass
     
     if data.startswith("allfiles"):
-    files = temp.GETALL.get(file_id)
+        files = temp.GETALL.get(file_id)
     if not files:
         return await message.reply('<b><i>ɴᴏ ꜱᴜᴄʜ ꜰɪʟᴇ ᴇxɪꜱᴛꜱ !</i></b>')
 
