@@ -379,11 +379,9 @@ if SILENTX_CAPTION:
         f_caption = await apply_christmas_greet(f_caption)
     except Exception as e:
         logger.exception(e)
-        f_caption=f_caption       # Keep the original f_caption if formatting fails
-        # f_caption remains unchanged
+        f_caption = f_caption
 
-# Handle case when f_caption is None after all processing
-if f_caption is None:
+    if f_caption is None:
         f_caption = ' '.join(filter(lambda x: not x.startswith('[') and not x.startswith('@') and not x.startswith('www.'), files.file_name.split()))
     if STREAM_MODE:
         btn = [
