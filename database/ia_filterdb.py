@@ -145,7 +145,12 @@ class DatabaseCache:
                 raise
     
     def _convert_doc(self, doc):
-        """Convert MongoDB document to cache-friendly dict"""
+        """Convert MongoDB document to cache-friendly dict - handles both dict and umongo objects"""
+        # Handle umongo Document objects
+        if hasattr(doc, 'dump'):
+            doc = doc.dump()
+        
+        # Now doc is guaranteed to be a dict
         return {
             'file_id': doc.get('_id') or doc.get('file_id'),
             'file_ref': doc.get('file_ref'),
@@ -409,6 +414,12 @@ async def save_file(media):
         LOGGER.info(f'{file_name} Saved Successfully In {"Secondary" if use_secondary else "Primary"} Database')
         return True, 1
 
+def _safe_get_attr(obj, attr, default=''):
+    """Safely get attribute from object or dict"""
+    if isinstance(obj, dict):
+        return obj.get(attr, default)
+    return getattr(obj, attr, default)
+
 async def get_search_results(chat_id, query, file_type=None, max_results=10, offset=0, filter=False):
     # Get settings
     if chat_id is not None:
@@ -507,8 +518,14 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
         cursor1 = Media.find(filter_query, projection).sort('$natural', -1).skip(offset).limit(max_results)
         files = await cursor1.to_list(length=max_results)
     
-    # Convert umongo documents to dicts
-    files = [db_cache._convert_doc(f.dump() if hasattr(f, 'dump') else f) for f in files]
+    # Convert to dicts - handle both umongo objects and raw dicts
+    converted_files = []
+    for f in files:
+        if hasattr(f, 'dump'):
+            converted_files.append(db_cache._convert_doc(f.dump()))
+        else:
+            converted_files.append(db_cache._convert_doc(f))
+    files = converted_files
     
     next_offset = offset + len(files)
     if next_offset >= total_results:
@@ -570,8 +587,14 @@ async def get_bad_files(query, file_type=None):
         cursor1 = Media.find(filter_query).sort('$natural', -1)
         files = await cursor1.to_list(length=count)
     
-    # Convert to dict format
-    files = [db_cache._convert_doc(f.dump() if hasattr(f, 'dump') else f) for f in files]
+    # Convert to dict format - handle both types
+    converted_files = []
+    for f in files:
+        if hasattr(f, 'dump'):
+            converted_files.append(db_cache._convert_doc(f.dump()))
+        else:
+            converted_files.append(db_cache._convert_doc(f))
+    files = converted_files
     
     total_results = len(files)
     return files, total_results
@@ -599,9 +622,15 @@ async def get_file_details(query):
         cursor = Media.find(filter_query)
         filedetails = await cursor.to_list(length=1)
     
-    # Convert to dict format
+    # Convert to dict format - handle both types
     if filedetails:
-        filedetails = [db_cache._convert_doc(f.dump() if hasattr(f, 'dump') else f) for f in filedetails]
+        converted_details = []
+        for f in filedetails:
+            if hasattr(f, 'dump'):
+                converted_details.append(db_cache._convert_doc(f.dump()))
+            else:
+                converted_details.append(db_cache._convert_doc(f))
+        filedetails = converted_details
     
     return filedetails
 
@@ -685,8 +714,9 @@ async def siletxbotz_get_movies(limit: int = 20) -> List[str]:
         pattern = r"(?:s\d{1,2}|season\s*\d+|season\d+)(?:\s*combined)?(?:e\d{1,2}|episode\s*\d+)?\b"
         
         for file in cursor:
-            file_name = getattr(file, "file_name", "") if hasattr(file, "file_name") else file.get("file_name", "")
-            caption = getattr(file, "caption", "") if hasattr(file, "caption") else file.get("caption", "")
+            # Handle both dict and object attributes safely
+            file_name = _safe_get_attr(file, "file_name", "")
+            caption = _safe_get_attr(file, "caption", "")
             
             if not (re.search(pattern, file_name, re.IGNORECASE) or re.search(pattern, caption, re.IGNORECASE)):
                 title = await silentxbotz_clean_title(file_name)
@@ -707,8 +737,9 @@ async def siletxbotz_get_series(limit: int = 30) -> Dict[str, List[int]]:
         pattern = r"(.*?)(?:S(\d{1,2})|Season\s*(\d+)|Season(\d+))(?:\s*Combined)?(?:E(\d{1,2})|Episode\s*(\d+))?\b"
         
         for file in cursor:
-            file_name = getattr(file, "file_name", "") if hasattr(file, "file_name") else file.get("file_name", "")
-            caption = getattr(file, "caption", "") if hasattr(file, "caption") else file.get("caption", "")
+            # Handle both dict and object attributes safely
+            file_name = _safe_get_attr(file, "file_name", "")
+            caption = _safe_get_attr(file, "caption", "")
             
             match = None
             if file_name:
@@ -724,7 +755,7 @@ async def siletxbotz_get_series(limit: int = 30) -> Dict[str, List[int]]:
         return {title: sorted(set(seasons))[:10] for title, seasons in grouped.items() if seasons}
     except Exception as e:
         logger.error(f"Error in siletxbotz_get_series: {e}")
-        return []
+        return {}
 
 # Utility functions
 def clear_search_cache():
