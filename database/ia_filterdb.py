@@ -82,10 +82,11 @@ class PersistentDatabaseCache:
     - Instant pagination (data already in memory)
     - Auto-refresh when new files added
     - Thread-safe operations
+    - NEWEST FILES FIRST (reversed order for pagination)
     """
     
     def __init__(self):
-        self.all_files = []  # Complete list of all files from DB
+        self.all_files = []  # Complete list of all files from DB (newest first)
         self.total_files = 0
         self.cache_loaded = False
         self.last_updated = None
@@ -95,6 +96,7 @@ class PersistentDatabaseCache:
     async def initialize_cache(self):
         """
         Load ALL files from MongoDB into memory on bot startup
+        Files are stored in REVERSE order (newest first, oldest last)
         This is called once when bot starts
         """
         async with self.loading_lock:
@@ -106,6 +108,7 @@ class PersistentDatabaseCache:
             logger.info("🚀 INITIALIZING PERSISTENT DATABASE CACHE")
             logger.info("=" * 70)
             logger.info("📥 Loading ALL files from MongoDB into server memory...")
+            logger.info("📌 Order: NEWEST FIRST → OLDEST LAST")
             
             start_time = datetime.utcnow()
             
@@ -122,30 +125,31 @@ class PersistentDatabaseCache:
                 }
                 
                 if MULTIPLE_DB:
-                    # Load from both databases
+                    # Load from both databases (newest first - reversed)
                     logger.info("🔄 Loading from PRIMARY database...")
                     count1 = await Media.count_documents({})
-                    cursor1 = Media.find({}, projection)
+                    cursor1 = Media.find({}, projection).sort('$natural', -1)  # -1 = descending (newest first)
                     files1 = await cursor1.to_list(length=count1) if count1 > 0 else []
                     
-                    logger.info(f"✅ Loaded {len(files1)} files from PRIMARY database")
+                    logger.info(f"✅ Loaded {len(files1)} files from PRIMARY database (newest first)")
                     
                     logger.info("🔄 Loading from SECONDARY database...")
                     count2 = await Media2.count_documents({})
-                    cursor2 = Media2.find({}, projection)
+                    cursor2 = Media2.find({}, projection).sort('$natural', -1)  # -1 = descending (newest first)
                     files2 = await cursor2.to_list(length=count2) if count2 > 0 else []
                     
-                    logger.info(f"✅ Loaded {len(files2)} files from SECONDARY database")
+                    logger.info(f"✅ Loaded {len(files2)} files from SECONDARY database (newest first)")
                     
+                    # Combine files (newest from both databases first)
                     self.all_files = files1 + files2
                 else:
-                    # Load from single database
+                    # Load from single database (newest first - reversed)
                     logger.info("🔄 Loading from database...")
                     self.total_files = await Media.count_documents({})
-                    cursor = Media.find({}, projection)
+                    cursor = Media.find({}, projection).sort('$natural', -1)  # -1 = descending (newest first)
                     self.all_files = await cursor.to_list(length=self.total_files) if self.total_files > 0 else []
                     
-                    logger.info(f"✅ Loaded {len(self.all_files)} files from database")
+                    logger.info(f"✅ Loaded {len(self.all_files)} files from database (newest first)")
                 
                 self.total_files = len(self.all_files)
                 self.cache_loaded = True
@@ -165,6 +169,7 @@ class PersistentDatabaseCache:
                 logger.info(f"⏱️ Load Time: {elapsed:.2f} seconds")
                 logger.info(f"🔍 Search Index Built: {len(self._search_index):,} entries")
                 logger.info(f"📅 Cache Timestamp: {self.last_updated.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                logger.info(f"📌 File Order: NEWEST FIRST → OLDEST LAST")
                 logger.info("=" * 70)
                 logger.info("🎯 Bot is now ready to serve searches from memory!")
                 logger.info("⚡ All searches and pagination will be INSTANT!")
@@ -222,20 +227,27 @@ class PersistentDatabaseCache:
     async def add_file_to_cache(self, file_data: dict):
         """
         Add a single new file to the cache
+        New files are added at the BEGINNING (newest first)
         Called when a new file is saved to database
         """
         if not self.cache_loaded:
             logger.warning("⚠️ Cache not loaded, skipping file addition")
             return
         
-        self.all_files.append(file_data)
+        # Insert at the beginning (index 0) to maintain newest-first order
+        self.all_files.insert(0, file_data)
         self.total_files += 1
         self.last_updated = datetime.utcnow()
         
         # Update search index
         file_name = file_data.get('file_name', '').lower()
         caption = file_data.get('caption', '')
-        idx = len(self.all_files) - 1
+        idx = 0  # New file is at index 0 (first position)
+        
+        # Shift all existing indices by 1
+        for word_indices in self._search_index.values():
+            for i in range(len(word_indices)):
+                word_indices[i] += 1
         
         if caption:
             caption = caption.lower()
@@ -245,7 +257,7 @@ class PersistentDatabaseCache:
             if len(word) >= 2:
                 if word not in self._search_index:
                     self._search_index[word] = []
-                self._search_index[word].append(idx)
+                self._search_index[word].insert(0, idx)  # Insert at beginning
         
         if USE_CAPTION_FILTER and caption:
             caption_words = caption.split()
@@ -254,20 +266,21 @@ class PersistentDatabaseCache:
                     if word not in self._search_index:
                         self._search_index[word] = []
                     if idx not in self._search_index[word]:
-                        self._search_index[word].append(idx)
+                        self._search_index[word].insert(0, idx)  # Insert at beginning
         
-        logger.info(f"➕ Added file to cache: {file_data.get('file_name', 'Unknown')} (Total: {self.total_files:,})")
+        logger.info(f"➕ Added file to cache (at top): {file_data.get('file_name', 'Unknown')} (Total: {self.total_files:,})")
     
     def search_in_cache(self, query: str, file_type: Optional[str] = None) -> List:
         """
         Search files in memory cache (NO DATABASE QUERY)
+        Returns results with NEWEST files first, OLDEST last
         
         Args:
             query: Search query (e.g., "my demon")
             file_type: Filter by file type (optional)
             
         Returns:
-            List of matching files
+            List of matching files (newest first, oldest last)
         """
         if not self.cache_loaded:
             logger.warning("⚠️ Cache not loaded yet!")
@@ -282,7 +295,7 @@ class PersistentDatabaseCache:
         
         matching_files = []
         
-        # Search through all cached files
+        # Search through all cached files (already in newest-first order)
         for file in self.all_files:
             file_name = getattr(file, 'file_name', '')
             caption = getattr(file, 'caption', '')
@@ -303,7 +316,7 @@ class PersistentDatabaseCache:
         
         elapsed = (datetime.utcnow() - start_time).total_seconds() * 1000  # Convert to ms
         
-        logger.info(f"🔍 Memory search for '{query}' completed in {elapsed:.2f}ms - Found {len(matching_files)} files")
+        logger.info(f"🔍 Memory search for '{query}' completed in {elapsed:.2f}ms - Found {len(matching_files)} files (newest first)")
         
         return matching_files
     
@@ -316,7 +329,8 @@ class PersistentDatabaseCache:
             'total_files': self.total_files,
             'memory_mb': round(memory_mb, 2),
             'last_updated': self.last_updated.strftime('%Y-%m-%d %H:%M:%S UTC') if self.last_updated else None,
-            'search_index_terms': len(self._search_index)
+            'search_index_terms': len(self._search_index),
+            'sort_order': 'newest_first'
         }
 
 # Initialize global persistent cache
@@ -395,7 +409,7 @@ async def check_db_size(db, cache):
         return 0
 
 async def save_file(media):
-    """Save file to database and add to memory cache"""
+    """Save file to database and add to memory cache (at the top - newest first)"""
     file_id, file_ref = unpack_new_file_id(media.file_id)
     
     file_name = SPECIAL_CHARS_PATTERN.sub(" ", str(media.file_name))
@@ -423,7 +437,7 @@ async def save_file(media):
         )
         await file.commit()
         
-        # Add to memory cache
+        # Add to memory cache (at the top - newest first)
         file_data = {
             'file_id': file_id,
             'file_ref': file_ref,
@@ -449,6 +463,7 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
     """
     Search files using in-memory cache (NO DATABASE QUERIES)
     All searches are instant because data is already in memory
+    Results are returned with NEWEST files first, OLDEST files last
     
     Args:
         chat_id: Chat ID
@@ -483,11 +498,11 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
 
     start_time = datetime.utcnow()
     
-    # Search in memory cache (NO DATABASE QUERY!)
+    # Search in memory cache (NO DATABASE QUERY!) - Results already in newest-first order
     all_matching_files = persistent_cache.search_in_cache(query, file_type)
     total_results = len(all_matching_files)
     
-    # Get requested page
+    # Get requested page (files already sorted newest first)
     page_files = all_matching_files[offset:offset + max_results]
     
     # Calculate next offset
@@ -497,12 +512,12 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
     
     elapsed = (datetime.utcnow() - start_time).total_seconds() * 1000
     
-    logger.info(f"⚡ INSTANT SEARCH from memory cache: '{query}' | Found: {total_results} | Page size: {len(page_files)} | Time: {elapsed:.2f}ms")
+    logger.info(f"⚡ INSTANT SEARCH from memory cache: '{query}' | Found: {total_results} | Page size: {len(page_files)} | Time: {elapsed:.2f}ms | Order: NEWEST FIRST")
     
     return page_files, next_offset, total_results
 
 async def get_bad_files(query, file_type=None):
-    """Get files for deletion/management from memory cache"""
+    """Get files for deletion/management from memory cache (newest first)"""
     if not persistent_cache.cache_loaded:
         logger.warning("⚠️ Cache not loaded yet!")
         return [], 0
@@ -569,14 +584,14 @@ def unpack_new_file_id(new_file_id):
     return file_id, file_ref
 
 async def siletxbotz_fetch_media(limit: int) -> List[dict]:
-    """Fetch media from memory cache instead of database"""
+    """Fetch media from memory cache instead of database (newest first)"""
     try:
         if not persistent_cache.cache_loaded:
             logger.warning("⚠️ Cache not loaded, returning empty list")
             return []
         
-        # Return latest files from cache
-        return persistent_cache.all_files[-limit:] if len(persistent_cache.all_files) >= limit else persistent_cache.all_files
+        # Return latest files from cache (first N files since they're newest)
+        return persistent_cache.all_files[:limit]
         
     except Exception as e:
         LOGGER.error(f"Error in siletxbotz_fetch_media: {e}")
@@ -658,6 +673,7 @@ async def initialize_database_cache():
     """
     Initialize the persistent database cache
     MUST BE CALLED ON BOT STARTUP!
+    Files are loaded in NEWEST FIRST order
     
     Usage in your main bot file:
         from database import initialize_database_cache
@@ -672,6 +688,7 @@ async def reload_database_cache():
     """
     Reload entire cache from database
     Use after bulk file uploads or major database changes
+    Files are reloaded in NEWEST FIRST order
     """
     logger.info("🔄 Reloading database cache...")
     await persistent_cache.reload_cache()
@@ -681,7 +698,7 @@ def get_cache_info() -> Dict:
     Get current cache information and statistics
     
     Returns:
-        Dict with cache status, file count, memory usage, etc.
+        Dict with cache status, file count, memory usage, sort order, etc.
     """
     info = persistent_cache.get_cache_info()
     logger.info("=" * 70)
@@ -692,6 +709,7 @@ def get_cache_info() -> Dict:
     logger.info(f"💾 Memory Usage: {info['memory_mb']:.2f} MB")
     logger.info(f"🔍 Search Index Terms: {info['search_index_terms']:,}")
     logger.info(f"📅 Last Updated: {info['last_updated']}")
+    logger.info(f"📌 Sort Order: {info['sort_order'].upper().replace('_', ' ')}")
     logger.info("=" * 70)
     return info
 
@@ -705,300 +723,42 @@ def clear_search_cache():
     logger.info("🧹 Regex cache cleared")
 
 # ============================================================================
-# BOT STARTUP INTEGRATION GUIDE
+# SORT ORDER EXPLANATION
 # ============================================================================
 
 """
-CRITICAL: Add this to your main bot file (bot.py or main.py)
-
-In your bot initialization code, add:
-
-from database import initialize_database_cache, get_cache_info, is_cache_ready
-
-async def start_bot():
-    # Initialize database cache BEFORE starting bot
-    await initialize_database_cache()
-    
-    # Verify cache is ready
-    if is_cache_ready():
-        print("✅ Bot is ready with full database cache!")
-        get_cache_info()
-    else:
-        print("❌ Cache initialization failed!")
-        return
-    
-    # Now start your bot
-    await app.start()
-
-# Run the bot
-asyncio.run(start_bot())
-
-
-EXAMPLE INTEGRATION:
---------------------
-
-import asyncio
-from pyrogram import Client
-from database import initialize_database_cache, is_cache_ready
-
-app = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-async def main():
-    print("🚀 Starting bot...")
-    
-    # STEP 1: Load database into memory
-    print("📥 Loading database into memory cache...")
-    await initialize_database_cache()
-    
-    # STEP 2: Verify cache is ready
-    if not is_cache_ready():
-        print("❌ Failed to load cache! Exiting...")
-        return
-    
-    print("✅ Cache loaded successfully!")
-    
-    # STEP 3: Start bot
-    print("🤖 Starting Telegram bot...")
-    await app.start()
-    print("✅ Bot is now running!")
-    
-    # Keep bot running
-    await asyncio.Event().wait()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-
-
-FEATURES OF THIS IMPLEMENTATION:
----------------------------------
-
-✅ COMPLETE DATABASE IN MEMORY
-   - All files loaded on bot startup
-   - No database queries during searches
-   - Instant search and pagination
-
-✅ AUTOMATIC CACHE UPDATES
-   - New files automatically added to cache
-   - No manual refresh needed
-
-✅ SEARCH INDEX
-   - Pre-built search index for faster lookups
-   - Optimized word-based searching
-   - Caption search support
-
-✅ MEMORY EFFICIENT
-   - ~2KB per file estimate
-   - 10,000 files ≈ 20MB memory
-   - 100,000 files ≈ 200MB memory
-
-✅ PERFORMANCE BENEFITS
-   - Search time: <50ms (vs 500-2000ms database)
-   - Pagination: Instant (data already in memory)
-   - No database load during searches
-   - Can handle thousands of concurrent users
-
-
-SEARCH FLOW:
-------------
-
-1. Bot Starts:
-   ├─ Load ALL files from MongoDB (one-time)
-   ├─ Build search index
-   ├─ Cache ready ✅
-   └─ Print "CACHE IMPORTED SUCCESSFULLY"
-
-2. User searches "my demon":
-   ├─ Search in memory cache (not database!)
-   ├─ Find all matching files in <50ms
-   ├─ Return page 1
-   └─ Total time: <100ms ⚡
-
-3. User clicks Next Page:
-   ├─ Get next page from same search results
-   ├─ No search needed (already have results)
-   └─ Total time: <10ms ⚡⚡
-
-4. New file uploaded:
-   ├─ Save to database
-   ├─ Add to memory cache
-   └─ Cache stays updated ✅
-
-
-MEMORY USAGE EXAMPLES:
-----------------------
-
-Database Size     | Memory Usage  | Search Time
------------------|---------------|-------------
-1,000 files      | ~2 MB         | <10ms
-10,000 files     | ~20 MB        | <30ms
-50,000 files     | ~100 MB       | <50ms
-100,000 files    | ~200 MB       | <100ms
-500,000 files    | ~1 GB         | <200ms
-
-
-ADMIN COMMANDS:
----------------
-
-# Check cache status
-cache_info = get_cache_info()
-
-# Check if cache is ready
-if is_cache_ready():
-    print("Cache is ready!")
-
-# Reload entire cache (after bulk updates)
-await reload_database_cache()
-
-
-MONITORING:
------------
-
-The cache automatically logs:
-- Initialization progress
-- Load time and file count
-- Memory usage estimates
-- Search performance metrics
-- Cache update operations
-
-
-ADVANTAGES OVER QUERY-BASED CACHING:
--------------------------------------
-
-❌ Query-based: Search "my demon" → Query DB → Cache results → Serve
-   - First search: Slow (database query)
-   - Different searches: Each needs DB query
-   - Memory: Only caches searched queries
-
-✅ Full cache: Load all → Search in memory → Serve
-   - ALL searches: Fast (no DB queries)
-   - ANY search term: Instant
-   - Memory: All data always available
-
-
-BEST PRACTICES:
----------------
-
-1. Initialize cache on bot startup (before serving users)
-2. Monitor memory usage for very large databases
-3. Use reload_database_cache() after bulk uploads
-4. Check is_cache_ready() before serving requests
-5. Log cache statistics periodically
-
-
-TROUBLESHOOTING:
-----------------
-
-Q: Bot uses too much memory?
-A: Reduce data by cleaning old/duplicate files, or use query-based caching
-
-Q: Cache takes long to load?
-A: Normal for large databases. 100k files ≈ 30-60 seconds load time
-
-Q: New files not showing in search?
-A: They're automatically added! Check logs for confirmation
-
-Q: Search still slow?
-A: Verify cache is loaded with is_cache_ready()
-
-
-PERFORMANCE COMPARISON:
------------------------
-
-Traditional (Database Query):
-└─ User searches → Database query (500-2000ms) → Results
-
-Query-Based Cache:
-├─ First search → Database query (500-2000ms) → Cache → Results
-└─ Same search again → Cache (instant)
-
-Full Memory Cache (THIS IMPLEMENTATION):
-├─ Bot starts → Load all data once (30-60s for 100k files)
-└─ ALL searches → Memory (<50ms) ⚡⚡⚡
-
-
-WHEN TO USE THIS:
------------------
-
-✅ Use full memory cache when:
-   - You have <500k files (<1GB memory)
-   - You want INSTANT search for all users
-   - You have sufficient server RAM
-   - Search performance is critical
-
-❌ Consider alternatives when:
-   - Database has millions of files
-   - Server has limited RAM (<2GB)
-   - Files change very frequently
-   - Bulk updates happen constantly
-
-
-MIGRATION FROM OLD CODE:
--------------------------
-
-1. Replace your database.py with this file
-2. Add initialization in main bot file:
-   
-   from database import initialize_database_cache
-   
-   async def start():
-       await initialize_database_cache()  # Add this line
-       await app.start()
-       
-3. No other changes needed! All functions work the same
-
-4. Enjoy instant searches! ⚡
-
-
-LOGS YOU'LL SEE:
-----------------
-
-On bot startup:
-======================================================================
-🚀 INITIALIZING PERSISTENT DATABASE CACHE
-======================================================================
-📥 Loading ALL files from MongoDB into server memory...
-🔄 Loading from PRIMARY database...
-✅ Loaded 50,000 files from PRIMARY database
-🔨 Building search index...
-✅ Search index built with 125,000 unique terms
-======================================================================
-✅ CACHE IMPORTED SUCCESSFULLY!
-======================================================================
-📊 Total Files Cached: 50,000
-💾 Estimated Memory Usage: 97.66 MB
-⏱️ Load Time: 15.23 seconds
-🔍 Search Index Built: 125,000 entries
-📅 Cache Timestamp: 2025-12-06 10:30:45 UTC
-======================================================================
-🎯 Bot is now ready to serve searches from memory!
-⚡ All searches and pagination will be INSTANT!
-======================================================================
-
-On user search:
-🔍 Memory search for 'my demon' completed in 23.45ms - Found 156 files
-⚡ INSTANT SEARCH from memory cache: 'my demon' | Found: 156 | Page size: 10 | Time: 25.67ms
-
-On file upload:
-➕ Added file to cache: My Demon S01E01.mkv (Total: 50,001)
-
-
-CONCLUSION:
------------
-
-This implementation provides:
-✅ Zero database queries during search
-✅ Sub-50ms search times
-✅ Instant pagination
-✅ Automatic cache updates
-✅ Memory-efficient storage
-✅ Production-ready code
-✅ Easy integration
-
-Perfect for bots that need:
-- Fast search performance
-- High user concurrency
-- Instant pagination
-- Reliable service
-
-Your bot will now serve searches at lightning speed! ⚡🚀
+FILE ORDERING IN CACHE:
+========================
+
+✅ NEWEST FILES FIRST → OLDEST FILES LAST
+
+When cache is loaded from database:
+- Files are fetched with .sort('$natural', -1)
+- This returns newest files first
+- Cache maintains this order
+
+When new file is added:
+- Inserted at index 0 (first position)
+- All existing files shift down
+- Newest file stays at top
+
+When searching:
+- Results maintain cache order (newest first)
+- Page 1 shows newest matching files
+- Page 2 shows older matching files
+- Last page shows oldest matching files
+
+Example:
+--------
+Database has:
+1. Movie_2025.mkv (newest - uploaded today)
+2. Movie_2024.mkv 
+3. Movie_2023.mkv (oldest - uploaded months ago)
+
+Search results show:
+Page 1: Movie_2025.mkv (newest)
+Page 2: Movie_2024.mkv
+Page 3: Movie_2023.mkv (oldest)
+
+This ensures users always see the latest content first!
 """
