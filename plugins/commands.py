@@ -365,18 +365,18 @@ async def start(client, message):
     f_caption = files.caption
     settings = await get_settings(int(grp_id))
 SILENTX_CAPTION = settings.get('caption', CUSTOM_FILE_CAPTION)
-
 if SILENTX_CAPTION:
     try:
-        # Format the caption with placeholders
         f_caption = SILENTX_CAPTION.format(
             file_name='' if title is None else title,
             file_size='' if size is None else size,
             file_caption='' if f_caption is None else f_caption,
             Christmas_greet="{Christmas_greet}"
         )
-        # Apply the Christmas greeting replacement
+
+        # must be inside async function
         f_caption = await apply_christmas_greet(f_caption)
+
     except Exception as e:
         logger.exception(e)
         f_caption = f_caption
