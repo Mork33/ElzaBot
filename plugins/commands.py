@@ -363,8 +363,7 @@ async def start(client, message):
                 reply_markup=InlineKeyboardMarkup(btn))
 
             filetype = msg.media
-file = getattr(msg, filetype.value)
-
+            file = getattr(msg, filetype.value)
 # Clean title
 title = ' '.join(
     filter(
