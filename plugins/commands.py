@@ -360,26 +360,29 @@ async def start(client, message):
         return await message.reply('ɴᴏ ꜱᴜᴄʜ ꜰɪʟᴇ ᴇxɪꜱᴛꜱ !')
     
     files = files_[0]
+    files = files_[0]
     title = ' '.join(filter(lambda x: not x.startswith('[') and not x.startswith('@') and not x.startswith('www.'), files.file_name.split()))
     size = get_size(files.file_size)
     f_caption = files.caption
     settings = await get_settings(int(grp_id))
-SILENTX_CAPTION = settings.get('caption', CUSTOM_FILE_CAPTION)
-if SILENTX_CAPTION:
-    try:
-        f_caption = SILENTX_CAPTION.format(
-            file_name='' if title is None else title,
-            file_size='' if size is None else size,
-            file_caption='' if f_caption is None else f_caption,
-            Christmas_greet="{Christmas_greet}"
-        )
 
-        # must be inside async function
-        f_caption = await apply_christmas_greet(f_caption)
+    SILENTX_CAPTION = settings.get('caption', CUSTOM_FILE_CAPTION)
 
-    except Exception as e:
-        logger.exception(e)
-        f_caption = f_caption
+    if SILENTX_CAPTION:
+        try:
+            f_caption = SILENTX_CAPTION.format(
+                file_name='' if title is None else title,
+                file_size='' if size is None else size,
+                file_caption='' if f_caption is None else f_caption,
+                Christmas_greet="{Christmas_greet}"
+            )
+
+            # must be inside async function
+            f_caption = await apply_christmas_greet(f_caption)
+
+        except Exception as e:
+            logger.exception(e)
+            f_caption = f_caption
 
     if f_caption is None:
         f_caption = ' '.join(filter(lambda x: not x.startswith('[') and not x.startswith('@') and not x.startswith('www.'), files.file_name.split()))
