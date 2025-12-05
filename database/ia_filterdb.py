@@ -91,6 +91,7 @@ class DatabaseCache:
             try:
                 # Projection for optimal memory usage
                 projection = {
+                    '_id': 1,
                     'file_id': 1,
                     'file_ref': 1,
                     'file_name': 1,
@@ -103,19 +104,27 @@ class DatabaseCache:
                 if MULTIPLE_DB:
                     # Load from both databases
                     LOGGER.info("Loading from primary database...")
-                    cursor1 = Media.find({}, projection)
+                    cursor1 = db[COLLECTION_NAME].find({}, projection)
                     files1 = await cursor1.to_list(length=None)
                     
                     LOGGER.info("Loading from secondary database...")
-                    cursor2 = Media2.find({}, projection)
+                    cursor2 = db2[COLLECTION_NAME].find({}, projection)
                     files2 = await cursor2.to_list(length=None)
                     
-                    self.media_cache = files1 + files2
+                    # Convert MongoDB documents to dict format
+                    self.media_cache = []
+                    for file in files1:
+                        self.media_cache.append(self._convert_doc(file))
+                    for file in files2:
+                        self.media_cache.append(self._convert_doc(file))
                 else:
                     # Load from single database
                     LOGGER.info("Loading from database...")
-                    cursor = Media.find({}, projection)
-                    self.media_cache = await cursor.to_list(length=None)
+                    cursor = db[COLLECTION_NAME].find({}, projection)
+                    files = await cursor.to_list(length=None)
+                    
+                    # Convert MongoDB documents to dict format
+                    self.media_cache = [self._convert_doc(file) for file in files]
                 
                 self.total_files = len(self.media_cache)
                 self.last_updated = datetime.utcnow()
@@ -135,6 +144,18 @@ class DatabaseCache:
                 self.is_loaded = False
                 raise
     
+    def _convert_doc(self, doc):
+        """Convert MongoDB document to cache-friendly dict"""
+        return {
+            'file_id': doc.get('_id') or doc.get('file_id'),
+            'file_ref': doc.get('file_ref'),
+            'file_name': doc.get('file_name', ''),
+            'file_size': doc.get('file_size', 0),
+            'file_type': doc.get('file_type'),
+            'caption': doc.get('caption'),
+            'mime_type': doc.get('mime_type')
+        }
+    
     def _estimate_memory_mb(self):
         """Estimate memory usage of cache"""
         if not self.media_cache:
@@ -149,12 +170,8 @@ class DatabaseCache:
             self.total_files += 1
             LOGGER.debug(f"Added file to cache. Total files: {self.total_files}")
     
-    async def search(self, regex, file_type=None, use_caption=False, offset=0, limit=10):
-        """Search through cached data"""
-        if not self.is_loaded:
-            LOGGER.warning("Cache not loaded yet, searching database directly")
-            return None
-        
+    def search_in_memory(self, regex, file_type=None, use_caption=False):
+        """Search through cached data - synchronous for speed"""
         results = []
         
         # Search through cache
@@ -165,7 +182,7 @@ class DatabaseCache:
             
             # Check file name match
             file_name = file.get('file_name', '')
-            if regex.search(file_name):
+            if file_name and regex.search(file_name):
                 results.append(file)
                 continue
             
@@ -175,16 +192,33 @@ class DatabaseCache:
                 if caption and regex.search(caption):
                     results.append(file)
         
-        total_results = len(results)
+        return results
+    
+    async def search(self, regex, file_type=None, use_caption=False, offset=0, limit=10):
+        """Search through cached data"""
+        if not self.is_loaded:
+            LOGGER.warning("Cache not loaded yet, returning None for fallback")
+            return None
         
-        # Apply pagination
-        paginated_results = results[offset:offset + limit]
-        
-        next_offset = offset + len(paginated_results)
-        if next_offset >= total_results:
-            next_offset = ''
-        
-        return paginated_results, next_offset, total_results
+        try:
+            # Perform search in memory (no async needed for list iteration)
+            results = self.search_in_memory(regex, file_type, use_caption)
+            
+            total_results = len(results)
+            
+            # Apply pagination
+            paginated_results = results[offset:offset + limit]
+            
+            next_offset = offset + len(paginated_results)
+            if next_offset >= total_results:
+                next_offset = ''
+            
+            LOGGER.debug(f"Cache search: found {total_results} results, returning {len(paginated_results)}")
+            return paginated_results, next_offset, total_results
+            
+        except Exception as e:
+            LOGGER.error(f"Error during cache search: {e}")
+            return None
     
     async def get_file_by_id(self, file_id: str):
         """Get file from cache by file_id"""
@@ -201,6 +235,7 @@ class DatabaseCache:
         LOGGER.info("Refreshing database cache...")
         self.is_loaded = False
         self.media_cache.clear()
+        self.total_files = 0
         await self.initialize()
     
     def get_stats(self):
@@ -257,7 +292,7 @@ def get_compiled_regex(query: str):
     if not query:
         raw_pattern = '.'
     elif ' ' not in query:
-        raw_pattern = r'(\b|[\.\+\-_])' + query + r'(\b|[\.\+\-_])'
+        raw_pattern = r'(\b|[\.\+\-_])' + re.escape(query) + r'(\b|[\.\+\-_])'
     else:
         raw_pattern = query.replace(' ', r'.*[\s\.\+\-_()]')
     
@@ -385,15 +420,17 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
             settings = await get_settings(int(chat_id))
             max_results = 10 if settings.get('max_btn') else int(MAX_B_TN)
 
-    # Check cache first
+    # Check search result cache first
     cache_key = f"{chat_id}:{query}:{file_type}:{max_results}:{offset}"
     cached_result = search_cache.get(cache_key)
     if cached_result:
+        LOGGER.debug(f"Returning cached search result for: {query}")
         return cached_result
 
     # Use cached compiled regex
     regex = get_compiled_regex(query)
     if not regex:
+        LOGGER.warning(f"Failed to compile regex for query: {query}")
         return [], '', 0
 
     # Ensure max_results is even
@@ -402,6 +439,7 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
         max_results += 1
 
     # Try to search from cache first
+    LOGGER.debug(f"Attempting cache search for: {query}")
     cache_result = await db_cache.search(
         regex=regex,
         file_type=file_type,
@@ -413,12 +451,13 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
     if cache_result is not None:
         # Cache hit - return results from memory
         files, next_offset, total_results = cache_result
+        LOGGER.info(f"Cache hit for '{query}': found {total_results} results, returning {len(files)} files")
         result = (files, next_offset, total_results)
         search_cache.set(cache_key, result)
         return result
     
     # Fallback to database search if cache not ready
-    LOGGER.warning("Cache miss - falling back to database search")
+    LOGGER.warning(f"Cache not ready - falling back to database search for: {query}")
     
     # Build filter query
     if USE_CAPTION_FILTER:
@@ -431,6 +470,7 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
 
     # Projection for faster data retrieval
     projection = {
+        '_id': 1,
         'file_id': 1,
         'file_ref': 1,
         'file_name': 1,
@@ -467,6 +507,9 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
         cursor1 = Media.find(filter_query, projection).sort('$natural', -1).skip(offset).limit(max_results)
         files = await cursor1.to_list(length=max_results)
     
+    # Convert umongo documents to dicts
+    files = [db_cache._convert_doc(f.dump() if hasattr(f, 'dump') else f) for f in files]
+    
     next_offset = offset + len(files)
     if next_offset >= total_results:
         next_offset = ''
@@ -476,6 +519,7 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
     # Cache the result
     search_cache.set(cache_key, result)
     
+    LOGGER.info(f"Database search for '{query}': found {total_results} results")
     return result
 
 async def get_bad_files(query, file_type=None):
@@ -526,6 +570,9 @@ async def get_bad_files(query, file_type=None):
         cursor1 = Media.find(filter_query).sort('$natural', -1)
         files = await cursor1.to_list(length=count)
     
+    # Convert to dict format
+    files = [db_cache._convert_doc(f.dump() if hasattr(f, 'dump') else f) for f in files]
+    
     total_results = len(files)
     return files, total_results
 
@@ -551,6 +598,10 @@ async def get_file_details(query):
     else:
         cursor = Media.find(filter_query)
         filedetails = await cursor.to_list(length=1)
+    
+    # Convert to dict format
+    if filedetails:
+        filedetails = [db_cache._convert_doc(f.dump() if hasattr(f, 'dump') else f) for f in filedetails]
     
     return filedetails
 
