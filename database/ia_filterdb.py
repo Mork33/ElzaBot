@@ -224,24 +224,22 @@ class PersistentDatabaseCache:
         self._search_index.clear()
         await self.initialize_cache()
     
-    async def add_file_to_cache(self, file_data: dict):
+    def add_file_to_cache_sync(self, file_dict: dict):
         """
-        Add a single new file to the cache
+        Synchronously add a file to cache (for bulk indexing)
         New files are added at the BEGINNING (newest first)
-        Called when a new file is saved to database
         """
         if not self.cache_loaded:
-            logger.warning("⚠️ Cache not loaded, skipping file addition")
             return
         
         # Insert at the beginning (index 0) to maintain newest-first order
-        self.all_files.insert(0, file_data)
+        self.all_files.insert(0, type('obj', (object,), file_dict)())
         self.total_files += 1
         self.last_updated = datetime.utcnow()
         
         # Update search index
-        file_name = file_data.get('file_name', '').lower()
-        caption = file_data.get('caption', '')
+        file_name = file_dict.get('file_name', '').lower()
+        caption = file_dict.get('caption', '') or ''
         idx = 0  # New file is at index 0 (first position)
         
         # Shift all existing indices by 1
@@ -267,7 +265,18 @@ class PersistentDatabaseCache:
                         self._search_index[word] = []
                     if idx not in self._search_index[word]:
                         self._search_index[word].insert(0, idx)  # Insert at beginning
+    
+    async def add_file_to_cache(self, file_data: dict):
+        """
+        Add a single new file to the cache (async version)
+        New files are added at the BEGINNING (newest first)
+        Called when a new file is saved to database
+        """
+        if not self.cache_loaded:
+            logger.warning("⚠️ Cache not loaded, skipping file addition")
+            return
         
+        self.add_file_to_cache_sync(file_data)
         logger.info(f"➕ Added file to cache (at top): {file_data.get('file_name', 'Unknown')} (Total: {self.total_files:,})")
     
     def search_in_cache(self, query: str, file_type: Optional[str] = None) -> List:
@@ -437,7 +446,7 @@ async def save_file(media):
         )
         await file.commit()
         
-        # Add to memory cache (at the top - newest first)
+        # Add to memory cache (at the top - newest first) - SYNCHRONOUS for speed
         file_data = {
             'file_id': file_id,
             'file_ref': file_ref,
@@ -447,7 +456,8 @@ async def save_file(media):
             'mime_type': media.mime_type,
             'caption': media.caption.html if media.caption else None
         }
-        await persistent_cache.add_file_to_cache(file_data)
+        # Use sync version to avoid async overhead during bulk indexing
+        persistent_cache.add_file_to_cache_sync(file_data)
         
     except DuplicateKeyError:
         LOGGER.error(f'{file_name} Is Already Saved In {"Secondary" if use_secondary else "Primary"} Database')
@@ -456,7 +466,6 @@ async def save_file(media):
         LOGGER.error(f'Validation Error While Saving File: {e}')
         return False, 2
     else:
-        LOGGER.info(f'{file_name} Saved Successfully In {"Secondary" if use_secondary else "Primary"} Database')
         return True, 1
 
 async def get_search_results(chat_id, query, file_type=None, max_results=10, offset=0, filter=False):
@@ -493,11 +502,8 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
 
     # Ensure max_results is even
     if max_results % 2 != 0:
-        logger.info(f"Since max_results Is An Odd Number ({max_results}), Bot Will Use {max_results + 1} As max_results To Make It Even.")
         max_results += 1
 
-    start_time = datetime.utcnow()
-    
     # Search in memory cache (NO DATABASE QUERY!) - Results already in newest-first order
     all_matching_files = persistent_cache.search_in_cache(query, file_type)
     total_results = len(all_matching_files)
@@ -509,10 +515,6 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
     next_offset = offset + len(page_files)
     if next_offset >= total_results:
         next_offset = ''
-    
-    elapsed = (datetime.utcnow() - start_time).total_seconds() * 1000
-    
-    logger.info(f"⚡ INSTANT SEARCH from memory cache: '{query}' | Found: {total_results} | Page size: {len(page_files)} | Time: {elapsed:.2f}ms | Order: NEWEST FIRST")
     
     return page_files, next_offset, total_results
 
@@ -529,7 +531,6 @@ async def get_file_details(query):
     """Get details of a specific file by file_id from memory cache"""
     if not persistent_cache.cache_loaded:
         logger.warning("⚠️ Cache not loaded yet! Falling back to database query...")
-        # Fallback to database if cache not loaded
         filter_query = {'file_id': query}
         
         if MULTIPLE_DB:
@@ -674,13 +675,6 @@ async def initialize_database_cache():
     Initialize the persistent database cache
     MUST BE CALLED ON BOT STARTUP!
     Files are loaded in NEWEST FIRST order
-    
-    Usage in your main bot file:
-        from database import initialize_database_cache
-        
-        async def main():
-            await initialize_database_cache()
-            # Start bot
     """
     await persistent_cache.initialize_cache()
 
@@ -701,16 +695,6 @@ def get_cache_info() -> Dict:
         Dict with cache status, file count, memory usage, sort order, etc.
     """
     info = persistent_cache.get_cache_info()
-    logger.info("=" * 70)
-    logger.info("📊 CACHE INFORMATION")
-    logger.info("=" * 70)
-    logger.info(f"✅ Cache Loaded: {info['loaded']}")
-    logger.info(f"📁 Total Files: {info['total_files']:,}")
-    logger.info(f"💾 Memory Usage: {info['memory_mb']:.2f} MB")
-    logger.info(f"🔍 Search Index Terms: {info['search_index_terms']:,}")
-    logger.info(f"📅 Last Updated: {info['last_updated']}")
-    logger.info(f"📌 Sort Order: {info['sort_order'].upper().replace('_', ' ')}")
-    logger.info("=" * 70)
     return info
 
 def is_cache_ready() -> bool:
