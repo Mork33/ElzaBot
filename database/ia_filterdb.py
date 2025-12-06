@@ -146,10 +146,9 @@ class Media(Document):
         # Optimized indexes for cursor-based pagination
         indexes = (
             '$file_name',  # Text index for search
-            [('_id', -1)],  # For cursor pagination
-            [('file_name', 1), ('file_type', 1), ('_id', -1)],  # Compound index
-            [('caption', 1), ('_id', -1)],  # Caption search index
-            [('file_type', 1), ('_id', -1)],  # File type filtering
+            [('file_name', 1), ('file_type', 1)],  # Compound index
+            [('caption', 1)],  # Caption search index
+            [('file_type', 1)],  # File type filtering
         )
         collection_name = COLLECTION_NAME
 
@@ -167,10 +166,9 @@ class Media2(Document):
         # Optimized indexes for cursor-based pagination
         indexes = (
             '$file_name',  # Text index for search
-            [('_id', -1)],  # For cursor pagination
-            [('file_name', 1), ('file_type', 1), ('_id', -1)],  # Compound index
-            [('caption', 1), ('_id', -1)],  # Caption search index
-            [('file_type', 1), ('_id', -1)],  # File type filtering
+            [('file_name', 1), ('file_type', 1)],  # Compound index
+            [('caption', 1)],  # Caption search index
+            [('file_type', 1)],  # File type filtering
         )
         collection_name = COLLECTION_NAME
 
