@@ -12,7 +12,6 @@ from utils import temp, get_readable_time
 from math import ceil
 from logging_helper import LOGGER
 
-
 lock = asyncio.Lock()
 
 @Client.on_callback_query(filters.regex(r'^index'))
@@ -157,12 +156,14 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot):
 
             batches = ceil(total_messages / BATCH_SIZE)
             batch_times = []
+            
             try:
                 await msg.edit(
                     f"📊 Indexing Starting......\n"
                     f"💬 Total Messages: <code>{total_messages}</code>\n"
                     f"💾 Total Fetch: <code>{total_fetch}</code>\n"
-                    f"⏰ Elapsed: <code>{get_readable_time(time.time() - start_time)}</code>",
+                    f"⏰ Elapsed: <code>{get_readable_time(time.time() - start_time)}</code>\n\n"
+                    f"⚡ Cache auto-update: <b>ENABLED</b>",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data='index_cancel')]])
                 )
             except MessageNotModified:
@@ -204,12 +205,16 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot):
                             continue
                         media.file_type = message.media.value
                         media.caption = message.caption
+                        
+                        # Save file (will auto-update cache)
                         save_tasks.append(save_file(media))
                     except Exception:
                         errors += 1
                         continue
 
+                # Execute all save operations for this batch
                 results = await asyncio.gather(*save_tasks, return_exceptions=True)
+                
                 for result in results:
                     if isinstance(result, Exception):
                         errors += 1
@@ -245,11 +250,14 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot):
                         f"📴 Non-Media: <code>{no_media + unsupported}</code> (🚫 Unsupported: <code>{unsupported}</code>)\n"
                         f"⚠️ Errors: <code>{errors}</code>\n"
                         f"⏱️ Elapsed: <code>{get_readable_time(elapsed)}</code>\n"
-                        f"⏰ ETA: <code>{get_readable_time(eta)}</code>",
+                        f"⏰ ETA: <code>{get_readable_time(eta)}</code>\n\n"
+                        f"⚡ Cache: <b>Auto-updating</b>",
                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Cancel', callback_data='index_cancel')]])
                     )
                 except MessageNotModified:
                     pass
+                except Exception as e:
+                    LOGGER.error(f"Error updating progress message: {e}")
 
             elapsed = time.time() - start_time
             try:
@@ -263,17 +271,24 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot):
                     f"🗑️ Deleted: <code>{deleted}</code>\n"
                     f"📴 Non-Media: <code>{no_media + unsupported}</code> (Unsupported: <code>{unsupported}</code>)\n"
                     f"⚠️ Errors: <code>{errors}</code>\n"
-                    f"⏰ Elapsed: <code>{get_readable_time(elapsed)}</code>",
+                    f"⏰ Elapsed: <code>{get_readable_time(elapsed)}</code>\n\n"
+                    f"✅ <b>Cache Updated:</b> {total_files:,} new files added to memory cache\n"
+                    f"⚡ All new files are now instantly searchable!",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Close', callback_data='close_data')]])
                 )
             except MessageNotModified:
                 pass
+            except Exception as e:
+                LOGGER.error(f"Error updating completion message: {e}")
 
         except Exception as e:
+            LOGGER.error(f"Critical error in index_files_to_db: {e}")
             try:
                 await msg.edit(
                     f"❌ Error: <code>{e}</code>",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Close', callback_data='close_data')]])
                 )
             except MessageNotModified:
+                pass
+            except Exception:
                 pass
