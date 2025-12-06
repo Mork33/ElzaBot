@@ -71,7 +71,7 @@ SPACES_PATTERN = re.compile(r"\s+")
 
 # Total count cache for maintaining consistency across pages
 class TotalCountCache:
-    def __init__(self, ttl_minutes=30):
+    def __init__(self, ttl_minutes=5):
         self.cache = {}
         self.ttl = timedelta(minutes=ttl_minutes)
     
