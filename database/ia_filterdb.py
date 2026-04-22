@@ -11,11 +11,10 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from marshmallow.exceptions import ValidationError
 from info import *
 from utils import get_settings, save_group_settings
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 from logging_helper import LOGGER
 from datetime import datetime, timedelta
 from functools import lru_cache
-from bson import ObjectId
 
 # Cache configuration
 _db_stats_cache_primary = {
@@ -58,101 +57,68 @@ db2 = client2[DATABASE_NAME]
 instance2 = Instance.from_db(db2)
 
 # Pre-compiled regex patterns for file name cleaning
-SPECIAL_CHARS_PATTERN = re.compile(r"[@\-\.#+$%^*()~`,;:\"?/<>\[\]{}=|\\]")
+SPECIAL_CHARS_LIST = [
+    '@', '-', '.', '#', '+', '$', '%', '^', '*', '(', ')', 
+    '~', '`', ',', ';', ':', "'", '"', '!', '?', '/', '<', 
+    '>', '[', ']', '{', '}', '=', '|', '\\'
+]
+
+SPECIAL_CHARS_PATTERN = re.compile('[' + ''.join(re.escape(c) for c in SPECIAL_CHARS_LIST) + ']+')
+
 KEYWORDS_PATTERN = re.compile(
-    "|".join(re.escape(keyword) for keyword in [
-        "_", "Adrama_lovers", "DA_Rips", "DramaPz", "ADL_Drama", "KDL", 
-        "ADL", "KncKorean", "YDF", "The_request_group", "The_Drama_arena", 
-        "RFT", "kdramaforyouall"
-    ]),
+    r'\b(' + '|'.join(re.escape(keyword) for keyword in ['_', 'MoviiWrld', 'Smile_Upload', 'Smile']) + r')\b',
     flags=re.IGNORECASE
 )
-SPACES_PATTERN = re.compile(r"\s+")
+SPACES_PATTERN = re.compile(r'\s+')
 
-# Total count cache for maintaining consistency across pages
-class TotalCountCache:
-    def __init__(self, ttl_minutes=5):
-        self.cache = {}
-        self.ttl = timedelta(minutes=ttl_minutes)
-    
-    def get(self, key: str) -> Optional[int]:
-        if key in self.cache:
-            total, timestamp = self.cache[key]
-            if datetime.utcnow() - timestamp < self.ttl:
-                return total
-            else:
-                del self.cache[key]
-        return None
-    
-    def set(self, key: str, total: int):
-        self.cache[key] = (total, datetime.utcnow())
-    
-    def clear(self):
-        self.cache.clear()
-
-total_count_cache = TotalCountCache(ttl_minutes=30)
-
-# Enhanced Search result cache with LRU
+# Search result cache
 class SearchCache:
     def __init__(self, ttl_minutes=5, max_size=1000):
-        self.cache = OrderedDict()
+        self.cache = {}
         self.ttl = timedelta(minutes=ttl_minutes)
         self.max_size = max_size
-        self.hit_count = 0
-        self.miss_count = 0
     
     def get(self, key: str) -> Optional[Tuple]:
         if key in self.cache:
             result, timestamp = self.cache[key]
             if datetime.utcnow() - timestamp < self.ttl:
-                self.hit_count += 1
-                # Move to end (most recently used)
-                self.cache.move_to_end(key)
                 return result
             else:
                 del self.cache[key]
-        self.miss_count += 1
         return None
     
     def set(self, key: str, value: Tuple):
-        # LRU eviction - remove oldest entry
         if len(self.cache) >= self.max_size:
-            self.cache.popitem(last=False)
+            oldest_keys = sorted(
+                self.cache.keys(), 
+                key=lambda k: self.cache[k][1]
+            )[:int(self.max_size * 0.1)]
+            for k in oldest_keys:
+                del self.cache[k]
         
         self.cache[key] = (value, datetime.utcnow())
     
     def clear(self):
         self.cache.clear()
-        self.hit_count = 0
-        self.miss_count = 0
-    
-    def get_stats(self):
-        total = self.hit_count + self.miss_count
-        hit_rate = (self.hit_count / total * 100) if total > 0 else 0
-        return {
-            'size': len(self.cache),
-            'hits': self.hit_count,
-            'misses': self.miss_count,
-            'hit_rate': f"{hit_rate:.2f}%"
-        }
 
 search_cache = SearchCache(ttl_minutes=5, max_size=1000)
 
-# Optimized regex pattern caching
 @lru_cache(maxsize=1000)
 def get_compiled_regex(query: str):
     """Cache compiled regex patterns to avoid recompilation"""
     query = query.strip()
+    
     if not query:
         raw_pattern = '.'
     elif ' ' not in query:
-        raw_pattern = r'(\b|[\.\+\-_])' + query + r'(\b|[\.\+\-_])'
+        raw_pattern = r'(\b|[\.\+\-_])' + re.escape(query) + r'(\b|[\.\+\-_])'
     else:
-        raw_pattern = query.replace(' ', r'.*[\s\.\+\-_()]')
+        raw_pattern = query.replace(' ', r'.*')
     
     try:
         return re.compile(raw_pattern, flags=re.IGNORECASE)
-    except:
+    except Exception as e:
+        logger.error(f"Regex compilation error for '{query}': {e}")
         return None
 
 @instance.register
@@ -166,12 +132,11 @@ class Media(Document):
     caption = fields.StrField(allow_none=True)
     
     class Meta:
-        # Optimized indexes for cursor-based pagination
         indexes = (
-            '$file_name',  # Text index for search
-            [('file_name', 1), ('file_type', 1)],  # Compound index
-            [('caption', 1)],  # Caption search index
-            [('file_type', 1)],  # File type filtering
+            '$file_name',
+            [('file_name', 1), ('file_type', 1)],
+            [('caption', 1)],
+            [('file_type', 1)],
         )
         collection_name = COLLECTION_NAME
 
@@ -186,12 +151,11 @@ class Media2(Document):
     caption = fields.StrField(allow_none=True)
     
     class Meta:
-        # Optimized indexes for cursor-based pagination
         indexes = (
-            '$file_name',  # Text index for search
-            [('file_name', 1), ('file_type', 1)],  # Compound index
-            [('caption', 1)],  # Caption search index
-            [('file_type', 1)],  # File type filtering
+            '$file_name',
+            [('file_name', 1), ('file_type', 1)],
+            [('caption', 1)],
+            [('file_type', 1)],
         )
         collection_name = COLLECTION_NAME
 
@@ -215,7 +179,6 @@ async def check_db_size(db, cache):
 async def save_file(media):
     file_id, file_ref = unpack_new_file_id(media.file_id)
     
-    # Optimized file name cleaning with pre-compiled patterns
     file_name = SPECIAL_CHARS_PATTERN.sub(" ", str(media.file_name))
     file_name = KEYWORDS_PATTERN.sub(" ", file_name)
     file_name = SPACES_PATTERN.sub(" ", file_name).strip()
@@ -250,61 +213,7 @@ async def save_file(media):
         LOGGER.info(f'{file_name} Saved Successfully In {"Secondary" if use_secondary else "Primary"} Database')
         return True, 1
 
-async def get_total_count(query: str, file_type: Optional[str] = None) -> int:
-    """Get total count with caching to maintain consistency across pages"""
-    # Create cache key based on query and file_type
-    count_cache_key = f"count:{query}:{file_type}"
-    
-    # Check if we have cached count
-    cached_count = total_count_cache.get(count_cache_key)
-    if cached_count is not None:
-        logger.debug(f"Using cached total count: {cached_count}")
-        return cached_count
-    
-    # Calculate new count
-    regex = get_compiled_regex(query)
-    if not regex:
-        return 0
-    
-    if USE_CAPTION_FILTER:
-        filter_query = {'$or': [{'file_name': regex}, {'caption': regex}]}
-    else:
-        filter_query = {'file_name': regex}
-    
-    if file_type:
-        filter_query['file_type'] = file_type
-    
-    if MULTIPLE_DB:
-        count1, count2 = await asyncio.gather(
-            Media.count_documents(filter_query),
-            Media2.count_documents(filter_query)
-        )
-        total = count1 + count2
-    else:
-        total = await Media.count_documents(filter_query)
-    
-    # Cache the count
-    total_count_cache.set(count_cache_key, total)
-    logger.debug(f"Calculated and cached total count: {total}")
-    
-    return total
-
 async def get_search_results(chat_id, query, file_type=None, max_results=10, offset=0, filter=False):
-    """
-    Enhanced search with cursor-based pagination for faster next page loads.
-    
-    Args:
-        chat_id: Chat ID for settings
-        query: Search query
-        file_type: Filter by file type
-        max_results: Number of results per page
-        offset: Can be either offset number or cursor string (ObjectId)
-        filter: Additional filters
-    
-    Returns:
-        Tuple of (files, next_offset, total_results)
-    """
-    # Get settings
     if chat_id is not None:
         settings = await get_settings(int(chat_id))
         try:
@@ -314,67 +223,16 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
             settings = await get_settings(int(chat_id))
             max_results = 10 if settings.get('max_btn') else int(MAX_B_TN)
 
-    # Determine if using cursor or offset
-    last_id = None
-    is_cursor_based = False
-    is_first_page = False
-    
-    if isinstance(offset, str) and offset and offset != '0' and offset != '':
-        try:
-            # Try to parse as ObjectId cursor
-            last_id = ObjectId(offset)
-            is_cursor_based = True
-        except:
-            # Fall back to offset-based
-            try:
-                offset = int(offset)
-                is_first_page = (offset == 0)
-            except:
-                offset = 0
-                is_first_page = True
-    elif isinstance(offset, int):
-        # Traditional offset
-        is_first_page = (offset == 0)
-    else:
-        offset = 0
-        is_first_page = True
-
-    # Check cache first
-    cache_key = f"{chat_id}:{query}:{file_type}:{max_results}:{offset if not is_cursor_based else last_id}"
+    cache_key = f"{chat_id}:{query}:{file_type}:{max_results}:{offset}"
     cached_result = search_cache.get(cache_key)
     if cached_result:
-        logger.debug(f"Cache hit for query: {query}")
-        # Even for cached results, fetch fresh total count
-        total_results = await get_total_count(query, file_type)
-        files, next_offset, _ = cached_result
-        return files, next_offset, total_results
+        return cached_result
 
-    # Use cached compiled regex
-    regex = get_compiled_regex(query)
-    if not regex:
-        return [], '', 0
-
-    # Build filter query
-    if USE_CAPTION_FILTER:
-        filter_query = {'$or': [{'file_name': regex}, {'caption': regex}]}
-    else:
-        filter_query = {'file_name': regex}
-    
-    if file_type:
-        filter_query['file_type'] = file_type
-    
-    # Add cursor-based pagination filter
-    if is_cursor_based and last_id:
-        filter_query['_id'] = {'$lt': last_id}
-
-    # Ensure max_results is even
     if max_results % 2 != 0:
         logger.info(f"Since max_results Is An Odd Number ({max_results}), Bot Will Use {max_results + 1} As max_results To Make It Even.")
         max_results += 1
 
-    # Projection for faster data retrieval
     projection = {
-        '_id': 1,  # Important for cursor
         'file_id': 1,
         'file_ref': 1,
         'file_name': 1,
@@ -384,77 +242,92 @@ async def get_search_results(chat_id, query, file_type=None, max_results=10, off
         'mime_type': 1
     }
 
-    # Always get total count (using cache)
-    total_results = await get_total_count(query, file_type)
+    search_queries = []
+    original_query = query.strip()
+    
+    search_queries.append(original_query)
+    
+    query_with_spaces = SPECIAL_CHARS_PATTERN.sub(' ', original_query)
+    query_with_spaces = SPACES_PATTERN.sub(' ', query_with_spaces).strip()
+    if query_with_spaces != original_query:
+        search_queries.append(query_with_spaces)
+    
+    query_no_special = original_query
+    for char in SPECIAL_CHARS_LIST:
+        query_no_special = query_no_special.replace(char, '')
+    query_no_special = SPACES_PATTERN.sub(' ', query_no_special).strip()
+    if query_no_special and query_no_special not in search_queries:
+        search_queries.append(query_no_special)
 
-    if MULTIPLE_DB:
-        # Build queries with cursor or offset
-        if is_cursor_based:
-            cursor1 = Media.find(filter_query, projection).sort('_id', -1).limit(max_results)
-            cursor2 = Media2.find(filter_query, projection).sort('_id', -1).limit(max_results)
+    files = []
+    total_results = 0
+    next_offset = ''
+    
+    for idx, search_query in enumerate(search_queries, 1):
+        if not search_query:
+            continue
+            
+        logger.info(f"🔍 Search attempt {idx}/{len(search_queries)}: '{search_query}'")
+        
+        regex = get_compiled_regex(search_query)
+        if not regex:
+            logger.warning(f"Failed to compile regex for: '{search_query}'")
+            continue
+
+        if USE_CAPTION_FILTER:
+            filter_query = {'$or': [{'file_name': regex}, {'caption': regex}]}
         else:
+            filter_query = {'file_name': regex}
+        
+        if file_type:
+            filter_query['file_type'] = file_type
+
+        if MULTIPLE_DB:
+            total_results_task1 = Media.count_documents(filter_query)
+            total_results_task2 = Media2.count_documents(filter_query)
+            
             cursor1 = Media.find(filter_query, projection).sort('$natural', -1).skip(offset).limit(max_results)
             cursor2 = Media2.find(filter_query, projection).sort('$natural', -1).skip(offset).limit(max_results)
-        
-        # Execute queries in parallel
-        files1, files2 = await asyncio.gather(
-            cursor1.to_list(length=max_results),
-            cursor2.to_list(length=max_results)
-        )
-        
-        # Merge and sort results
-        if is_cursor_based:
-            files = sorted(files1 + files2, key=lambda x: x.get('_id'), reverse=True)[:max_results]
-        else:
+            
+            results = await asyncio.gather(
+                total_results_task1,
+                total_results_task2,
+                cursor1.to_list(length=max_results),
+                cursor2.to_list(length=max_results)
+            )
+            
+            total_results = results[0] + results[1]
+            files1 = results[2]
+            files2 = results[3]
+            
             files = (files1 + files2)[:max_results]
-    else:
-        # Single database
-        if is_cursor_based:
-            cursor = Media.find(filter_query, projection).sort('_id', -1).limit(max_results)
         else:
-            cursor = Media.find(filter_query, projection).sort('$natural', -1).skip(offset).limit(max_results)
+            total_results = await Media.count_documents(filter_query)
+            cursor1 = Media.find(filter_query, projection).sort('$natural', -1).skip(offset).limit(max_results)
+            files = await cursor1.to_list(length=max_results)
         
-        files = await cursor.to_list(length=max_results)
+        if files:
+            logger.info(f"✅ Found {len(files)} results with query: '{search_query}' (attempt {idx})")
+            break
+        else:
+            logger.info(f"❌ No results for: '{search_query}'")
     
-    # Calculate next offset/cursor
-    if is_cursor_based:
-        # Return cursor (ObjectId) for next page
-        next_offset = str(files[-1]['_id']) if files else ''
-    else:
-        # Return numeric offset
-        next_offset = offset + len(files)
-        if total_results > 0 and next_offset >= total_results:
-            next_offset = ''
+    next_offset = offset + len(files)
+    if next_offset >= total_results:
+        next_offset = ''
     
     result = (files, next_offset, total_results)
     
-    # Cache the result (without total_results to save space, we'll fetch it fresh)
-    search_cache.set(cache_key, (files, next_offset, total_results))
-    
-    # Prefetch next page in background (optional)
-    if files and next_offset:
-        asyncio.create_task(prefetch_next_page(chat_id, query, file_type, max_results, next_offset))
+    if files:
+        search_cache.set(cache_key, result)
     
     return result
 
-async def prefetch_next_page(chat_id, query, file_type, max_results, current_offset):
-    """Prefetch next page in background to improve UX"""
-    try:
-        cache_key = f"{chat_id}:{query}:{file_type}:{max_results}:{current_offset}"
-        # Only prefetch if not already cached
-        if search_cache.get(cache_key) is None:
-            await get_search_results(chat_id, query, file_type, max_results, current_offset)
-            logger.debug(f"Prefetched next page for query: {query}")
-    except Exception as e:
-        logger.debug(f"Prefetch failed (non-critical): {e}")
-
 async def get_bad_files(query, file_type=None):
-    # Use cached compiled regex
     regex = get_compiled_regex(query)
     if not regex:
         return [], 0
     
-    # Build filter query
     if USE_CAPTION_FILTER:
         filter_query = {'$or': [{'file_name': regex}, {'caption': regex}]}
     else:
@@ -464,21 +337,20 @@ async def get_bad_files(query, file_type=None):
         filter_query['file_type'] = file_type
     
     if MULTIPLE_DB:
-        # Parallel queries for both databases
+        count_task1 = Media.count_documents(filter_query)
+        count_task2 = Media2.count_documents(filter_query)
+        counts = await asyncio.gather(count_task1, count_task2)
+        count1, count2 = counts[0], counts[1]
+        
         cursor1 = Media.find(filter_query).sort('$natural', -1)
         cursor2 = Media2.find(filter_query).sort('$natural', -1)
         
-        count_task1 = Media.count_documents(filter_query)
-        count_task2 = Media2.count_documents(filter_query)
-        
-        results = await asyncio.gather(
-            count_task1,
-            count_task2,
-            cursor1.to_list(length=await count_task1),
-            cursor2.to_list(length=await count_task2)
+        files_results = await asyncio.gather(
+            cursor1.to_list(length=count1),
+            cursor2.to_list(length=count2)
         )
         
-        files = results[2] + results[3]
+        files = files_results[0] + files_results[1]
     else:
         count = await Media.count_documents(filter_query)
         cursor1 = Media.find(filter_query).sort('$natural', -1)
@@ -491,7 +363,6 @@ async def get_file_details(query):
     filter_query = {'file_id': query}
     
     if MULTIPLE_DB:
-        # Search both databases in parallel
         cursor1 = Media.find(filter_query)
         cursor2 = Media2.find(filter_query)
         
@@ -539,7 +410,6 @@ def unpack_new_file_id(new_file_id):
 
 async def siletxbotz_fetch_media(limit: int) -> List[dict]:
     try:
-        # Use projection to fetch only needed fields
         projection = {'file_name': 1, 'caption': 1}
         
         if MULTIPLE_DB:
@@ -624,14 +494,8 @@ async def siletxbotz_get_series(limit: int = 30) -> Dict[str, List[int]]:
         logger.error(f"Error in siletxbotz_get_series: {e}")
         return []
 
-# Utility functions
 def clear_search_cache():
     """Clear the search cache - useful after bulk updates"""
     search_cache.clear()
-    total_count_cache.clear()
     get_compiled_regex.cache_clear()
     logger.info("Search cache cleared successfully")
-
-def get_cache_stats():
-    """Get cache statistics for monitoring"""
-    return search_cache.get_stats()
